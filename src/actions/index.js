@@ -39,7 +39,17 @@ const APP_ALIASES = [
   ["github", "github"],
   ["paint", "paint"],
   ["camara", "camera"],
-  ["cámara", "camera"]
+  ["cámara", "camera"],
+  ["chatgpt", "chatgpt"],
+  ["chat gpt", "chatgpt"],
+  ["gpt", "chatgpt"],
+  ["notion", "notion"],
+  ["slack", "slack"],
+  ["figma", "figma"],
+  ["word", "word"],
+  ["excel", "excel"],
+  ["powerpoint", "powerpoint"],
+  ["teams", "teams"]
 ];
 
 function resolveAppName(target) {
@@ -55,6 +65,9 @@ async function runAction(action, args = {}) {
     case "open_app":
       if (args.name === "paint") return extra.openPaint();
       if (args.name === "camera") return extra.openCamera();
+      if (["chatgpt", "notion", "figma", "youtube", "github"].includes(args.name)) {
+        return extra.openSite(args.name === "chatgpt" ? "chatgpt" : args.name);
+      }
       return actions.openApp(args.name);
     case "open_url":
       return actions.openUrl(args.url);
@@ -860,6 +873,9 @@ function matchLocalCommand(rawText) {
   // Cerrar ChatGPT / ventanas mal reconocidas por el mic
   if (/cierra|cerrar/.test(t) && /chat\s*gpt|chatgpt|echar gpt|gpt/.test(t)) {
     return { action: "kill_process", args: { name: "chrome" }, say: "Cierro Chrome (ChatGPT)." };
+  }
+  if (/^(abre|abrir)\s+(chat\s*gpt|chatgpt|gpt)$/.test(t)) {
+    return { action: "open_app", args: { name: "chatgpt" }, say: "Abro ChatGPT." };
   }
 
   if (/que puedes hacer|qué puedes hacer|que funciones|qué funciones|ayuda|comandos/.test(t)) {

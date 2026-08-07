@@ -41,7 +41,30 @@ const APP_MAP = {
     "C:\\Program Files\\Opera\\opera.exe"
   ],
   youtube: ["https://www.youtube.com"],
-  github: ["https://github.com"]
+  github: ["https://github.com"],
+  chatgpt: ["https://chatgpt.com"],
+  notion: ["https://www.notion.so"],
+  figma: ["https://www.figma.com"],
+  slack: [
+    path.join(os.homedir(), "AppData\\Local\\slack\\slack.exe"),
+    "https://app.slack.com"
+  ],
+  word: [
+    "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+    "WINWORD.EXE"
+  ],
+  excel: [
+    "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+    "EXCEL.EXE"
+  ],
+  powerpoint: [
+    "C:\\Program Files\\Microsoft Office\\root\\Office16\\POWERPNT.EXE",
+    "POWERPNT.EXE"
+  ],
+  teams: [
+    path.join(os.homedir(), "AppData\\Local\\Microsoft\\Teams\\current\\Teams.exe"),
+    "ms-teams:"
+  ]
 };
 
 const WHATSAPP_STORE_APP =
