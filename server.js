@@ -1,12 +1,14 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const { config } = require("./src/config");
 const { buildGreeting } = require("./src/core/greet");
 const { handleInstruction, clearHistory } = require("./src/core/brain");
-const { speak } = require("./src/voice/tts");
+const { speak, warmVoiceCache, synthesizeToFile } = require("./src/voice/tts");
 
 const PUBLIC = path.join(__dirname, "public");
+const AUDIO_DIR = path.join(os.homedir(), ".jarvis-tts-cache");
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -14,7 +16,8 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
-  ".ico": "image/x-icon"
+  ".ico": "image/x-icon",
+  ".mp3": "audio/mpeg"
 };
 
 function sendJson(res, status, payload) {
@@ -59,6 +62,24 @@ function serveStatic(req, res) {
   fs.createReadStream(filePath).pipe(res);
 }
 
+function serveAudio(fileName, res) {
+  const safe = path.basename(fileName);
+  if (!/^[a-f0-9]+\.mp3$/i.test(safe)) {
+    res.writeHead(400).end("Bad audio");
+    return;
+  }
+  const filePath = path.join(AUDIO_DIR, safe);
+  if (!fs.existsSync(filePath)) {
+    res.writeHead(404).end("Missing audio");
+    return;
+  }
+  res.writeHead(200, {
+    "Content-Type": "audio/mpeg",
+    "Cache-Control": "public, max-age=86400"
+  });
+  fs.createReadStream(filePath).pipe(res);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${config.host}:${config.port}`);
 
@@ -74,25 +95,58 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/greeting") {
       const text = buildGreeting();
-      return sendJson(res, 200, { text });
+      let audioUrl = null;
+      try {
+        const file = await synthesizeToFile(text);
+        if (file) audioUrl = `/api/audio/${path.basename(file)}`;
+      } catch (error) {
+        console.warn("[greet-audio]", error.message);
+      }
+      return sendJson(res, 200, { text, audioUrl });
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/api/audio/")) {
+      return serveAudio(url.pathname.replace("/api/audio/", ""), res);
     }
 
     if (req.method === "POST" && url.pathname === "/api/greet") {
       const text = buildGreeting();
-      speak(text).catch((e) => console.error("[tts]", e.message));
-      return sendJson(res, 200, { ok: true, text });
+      let audioUrl = null;
+      try {
+        const file = await synthesizeToFile(text);
+        if (file) audioUrl = `/api/audio/${path.basename(file)}`;
+      } catch {
+        // ignore
+      }
+      // También intenta hablar en servidor por si no hay panel
+      speak(text).catch(() => {});
+      return sendJson(res, 200, { ok: true, text, audioUrl });
     }
 
     if (req.method === "POST" && url.pathname === "/api/command") {
       const body = await readBody(req);
-      const speakReply = body.speak !== false;
-      const result = await handleInstruction(body.text || "", { speakReply });
+      const browserAudio = body.browserAudio !== false;
+      const speakReply = browserAudio ? false : body.speak !== false;
+      console.log("[cmd]", body.text);
+      const result = await handleInstruction(body.text || "", {
+        speakReply,
+        browserAudio
+      });
+      console.log("[result]", result.action, result.say);
       return sendJson(res, 200, result);
     }
 
     if (req.method === "POST" && url.pathname === "/api/speak") {
       const body = await readBody(req);
-      await speak(body.text || "");
+      const text = body.text || "";
+      if (body.browserAudio) {
+        const file = await synthesizeToFile(text);
+        return sendJson(res, 200, {
+          ok: true,
+          audioUrl: file ? `/api/audio/${path.basename(file)}` : null
+        });
+      }
+      await speak(text);
       return sendJson(res, 200, { ok: true });
     }
 
@@ -108,28 +162,49 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 404, { error: "Not found" });
   } catch (error) {
     console.error(error);
-    sendJson(res, 500, { error: error.message || "Error interno" });
+    // Nunca devolver solo "Error" crudo al cliente de voz
+    sendJson(res, 200, {
+      ok: false,
+      say: "Se me trabó esa orden, bro. Inténtalo otra vez.",
+      action: "none",
+      result: { ok: false, message: error.message || "Error interno" }
+    });
   }
 });
 
+async function openPanel() {
+  const url = `http://127.0.0.1:${config.port}/`;
+  const { spawn } = require("node:child_process");
+  spawn("cmd", ["/c", "start", "", url], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true
+  }).unref();
+}
+
 async function boot() {
-  const shouldGreet = process.argv.includes("--greet");
+  const shouldOpen = !process.argv.includes("--no-open");
+  warmVoiceCache().catch(() => {});
+
+  const { phoneUrls } = require("./src/remote/lan");
+  const { startTelegramBot } = require("./src/remote/telegram");
 
   server.listen(config.port, config.host, async () => {
-    console.log(
-      `${config.assistantName} listo → http://${config.host}:${config.port}`
-    );
-    if (!config.groqApiKey) {
-      console.log("Aviso: falta GROQ_API_KEY en .env (gratis en console.groq.com)");
+    console.log(`${config.assistantName} listo → http://127.0.0.1:${config.port}`);
+    const phones = phoneUrls();
+    if (phones.length) {
+      console.log("Teléfono (misma WiFi):");
+      for (const u of phones) console.log(`  ${u}`);
     }
-
-    if (shouldGreet) {
-      const text = buildGreeting();
-      console.log("[saludo]", text);
+    if (!config.groqApiKey) {
+      console.log("Aviso: falta GROQ_API_KEY en .env");
+    }
+    startTelegramBot();
+    if (shouldOpen) {
       try {
-        await speak(text);
+        openPanel();
       } catch (error) {
-        console.error("[tts]", error.message);
+        console.error("[open]", error.message);
       }
     }
   });

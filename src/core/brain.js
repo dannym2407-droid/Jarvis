@@ -1,13 +1,74 @@
 const { askGroq } = require("../ai");
-const { runAction, matchLocalCommand } = require("../actions");
-const { speak } = require("../voice/tts");
+const { runAction, matchLocalCommand, stripWakeWord } = require("../actions");
+const {
+  speak,
+  synthesizeToFile,
+  ACK_PHRASES,
+  DONE_PHRASES,
+  FAIL_PHRASES
+} = require("../voice/tts");
+const { config } = require("../config");
+const path = require("node:path");
 
 const history = [];
 
-async function handleInstruction(text, { speakReply = true } = {}) {
-  const input = String(text || "").trim();
+function pick(list) {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+const INFO_ACTIONS = new Set([
+  "tell_time",
+  "tell_date",
+  "weather",
+  "battery",
+  "system_status",
+  "clipboard",
+  "joke",
+  "motivation",
+  "whoami",
+  "crypto",
+  "coin_flip",
+  "dice",
+  "password",
+  "wifi_info",
+  "list_processes",
+  "run_cmd",
+  "briefing",
+  "clipboard_ai",
+  "smart_answer",
+  "recall"
+]);
+
+function needsAck(action) {
+  return Boolean(action) && action !== "none" && !INFO_ACTIONS.has(action);
+}
+
+async function prepareAudio(text) {
+  if (!text) return null;
+  try {
+    const file = await synthesizeToFile(text);
+    if (!file) return null;
+    return `/api/audio/${path.basename(file)}`;
+  } catch (error) {
+    console.warn("[tts-prep]", error.message);
+    return null;
+  }
+}
+
+function enrichWhoami(plan) {
+  if (plan.action === "whoami") {
+    plan.args = { ...(plan.args || {}), userName: config.userName };
+  }
+  return plan;
+}
+
+async function handleInstruction(text, { speakReply = true, browserAudio = false } = {}) {
+  const input = stripWakeWord(String(text || "").trim());
   if (!input) {
-    return { ok: false, say: "No te escuché.", result: null };
+    const say = "Te escucho, bro. Dime con confianza.";
+    const audioUrl = browserAudio ? await prepareAudio(say) : null;
+    if (speakReply && !browserAudio) await speak(say).catch(() => {});
+    return { ok: false, say, audioUrl, result: null };
   }
 
   history.push({ role: "user", content: input });
@@ -16,17 +77,65 @@ async function handleInstruction(text, { speakReply = true } = {}) {
   if (!plan) {
     plan = await askGroq(input, history.filter((m) => m.role !== "system"));
   }
+  plan = enrichWhoami(plan);
 
-  const result = await runAction(plan.action, plan.args || {});
-  const say =
-    plan.say ||
-    result.message ||
-    (result.ok ? "Listo." : "No pude completar eso.");
+  const action = plan.action || "none";
+  let ack = null;
+  let ackAudioUrl = null;
+  let ackPromise = Promise.resolve();
 
-  history.push({ role: "assistant", content: say });
-  if (history.length > 20) history.splice(0, history.length - 20);
+  if (needsAck(action)) {
+    ack = plan.say && plan.say.length < 80 ? plan.say : pick(ACK_PHRASES);
+    if (browserAudio) {
+      ackAudioUrl = await prepareAudio(ack);
+    } else if (speakReply) {
+      ackPromise = speak(ack).catch((e) => console.error("[tts-ack]", e.message));
+    }
+  }
 
-  if (speakReply) {
+  const [result] = await Promise.all([runAction(action, plan.args || {}), ackPromise]);
+
+  let say;
+  if (action === "none") {
+    // Conversación libre: respeta lo que diga la IA
+    say = plan.say || "¿Qué más ocupas?";
+  } else if (INFO_ACTIONS.has(action)) {
+    // Combina dato real + estilo libre si venía say
+    say = result.message || plan.say || pick(DONE_PHRASES);
+    if (plan.say && result.message && plan.say !== result.message && plan.say.length < 120) {
+      say = `${result.message} ${plan.say}`;
+    }
+  } else if (result.ok === false) {
+    say =
+      result.message ||
+      pick([
+        "No pude completar eso, bro.",
+        "Falló esa orden, ¿lo intentamos otra vez?",
+        "No me salió. Dame otra pista."
+      ]);
+  } else if (needsAck(action) && plan.say && plan.say !== ack) {
+    // Confirmación con personalidad
+    say = plan.say;
+  } else {
+    say = pick([
+      ...DONE_PHRASES,
+      "Ya quedó, bro.",
+      "Hecho, ¿qué sigue?",
+      "Listo, eso ya corre.",
+      "Va, cumplido."
+    ]);
+  }
+
+  // Límite cómodo para voz, pero más largo que antes
+  say = String(say || "").replace(/\s+/g, " ").trim().slice(0, 420);
+
+  history.push({ role: "assistant", content: ack ? `${ack} ${say}` : say });
+  if (history.length > 28) history.splice(0, history.length - 28);
+
+  let audioUrl = null;
+  if (browserAudio) {
+    audioUrl = await prepareAudio(say);
+  } else if (speakReply) {
     try {
       await speak(say);
     } catch (error) {
@@ -34,7 +143,15 @@ async function handleInstruction(text, { speakReply = true } = {}) {
     }
   }
 
-  return { ok: Boolean(result.ok !== false), say, action: plan.action, result };
+  return {
+    ok: Boolean(result.ok !== false),
+    say,
+    ack,
+    ackAudioUrl,
+    audioUrl,
+    action,
+    result
+  };
 }
 
 function clearHistory() {

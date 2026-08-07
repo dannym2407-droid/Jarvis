@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Jarvis Phone</title>
+  <link rel="stylesheet" href="/phone.css" />
+</head>
+<body>
+  <main class="phone">
+    <header>
+      <p class="brand">JARVIS</p>
+      <p id="status" class="status">Conectando...</p>
+    </header>
+
+    <section id="reply" class="reply">Mándame una orden para controlar tu PC.</section>
+
+    <div class="modes">
+      <button type="button" data-cmd="briefing">Briefing</button>
+      <button type="button" data-cmd="modo mañana">Mañana</button>
+      <button type="button" data-cmd="modo enfoque">Enfoque</button>
+      <button type="button" data-cmd="modo coding">Coding</button>
+      <button type="button" data-cmd="modo chill">Chill</button>
+      <button type="button" data-cmd="abre cursor">Cursor</button>
+    </div>
+
+    <form id="form" class="composer">
+      <textarea id="input" rows="3" placeholder="Ej: abre Chrome, clima, mándale a mamá por whatsapp que ya voy..."></textarea>
+      <button type="submit">Enviar a la PC</button>
+    </form>
+
+    <p class="note">
+      Estás en la misma WiFi que tu laptop. El micrófono del teléfono puede fallar en HTTP;
+      por texto funciona perfecto. Para control desde cualquier red: Telegram bot (ver README).
+    </p>
+  </main>
+  <script src="/phone.js"></script>
+</body>
+</html>

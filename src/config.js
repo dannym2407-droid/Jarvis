@@ -29,11 +29,14 @@ loadEnvFile();
 const config = {
   root: ROOT,
   port: Number(process.env.PORT || 8787),
-  host: "127.0.0.1",
+  // 0.0.0.0 = accesible desde el teléfono en la misma WiFi
+  host: process.env.HOST || "0.0.0.0",
   userName: process.env.USER_NAME || "Danny",
   voiceLang: process.env.VOICE_LANG || "es-MX",
+  voiceMale: process.env.VOICE_MALE || "es-MX-JorgeNeural",
   groqApiKey: process.env.GROQ_API_KEY || "",
   groqModel: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   assistantName: "Jarvis"
 };
 

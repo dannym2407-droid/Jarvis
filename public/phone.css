@@ -1,0 +1,82 @@
+:root {
+  --bg: #070d14;
+  --cyan: #5eead4;
+  --text: #e8f6ff;
+  --muted: #8aa0b5;
+  --panel: #102033;
+  --line: #1e3a55;
+  --font: "Segoe UI Semibold", "Trebuchet MS", sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font);
+  color: var(--text);
+  background:
+    radial-gradient(600px 320px at 50% -10%, #134e4a66, transparent 60%),
+    linear-gradient(180deg, #0a1520, var(--bg));
+}
+.phone {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 20px 16px 32px;
+  display: grid;
+  gap: 14px;
+}
+.brand {
+  margin: 0;
+  letter-spacing: 0.28em;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.status { margin: 4px 0 0; color: var(--cyan); }
+.reply {
+  min-height: 90px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  line-height: 1.45;
+}
+.modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.modes button {
+  border: 1px solid var(--line);
+  background: #0d1c2b;
+  color: var(--text);
+  border-radius: 12px;
+  padding: 12px 8px;
+  font-size: 0.82rem;
+}
+.composer {
+  display: grid;
+  gap: 10px;
+}
+.composer textarea {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #0d1c2b;
+  color: var(--text);
+  padding: 12px;
+  resize: vertical;
+  font: inherit;
+}
+.composer button {
+  border: 0;
+  border-radius: 14px;
+  padding: 14px;
+  background: linear-gradient(160deg, #14b8a6, #0f766e);
+  color: white;
+  font: inherit;
+  font-weight: 700;
+}
+.note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}

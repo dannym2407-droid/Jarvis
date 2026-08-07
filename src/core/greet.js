@@ -10,20 +10,12 @@ function timeOfDay() {
 function buildGreeting() {
   const name = config.userName;
   const greeting = timeOfDay();
-  const weekday = new Date().toLocaleDateString("es-GT", { weekday: "long" });
-  const clock = new Date().toLocaleTimeString("es-GT", {
-    hour: "2-digit",
-    minute: "2-digit"
-  });
-
-  const lines = [
-    `${greeting}, ${name}.`,
-    `Soy ${config.assistantName}, listo para ayudarte.`,
-    `Hoy es ${weekday}, son las ${clock}.`,
-    "Dime qué necesitas."
+  const options = [
+    `${greeting}, ${name}. Jarvis listo.`,
+    `${greeting}. ¿Qué hacemos?`,
+    `Qué onda, ${name}. Aquí ando.`
   ];
-
-  return lines.join(" ");
+  return options[Math.floor(Math.random() * options.length)];
 }
 
 module.exports = { buildGreeting, timeOfDay };

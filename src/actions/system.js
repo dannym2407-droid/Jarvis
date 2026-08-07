@@ -14,22 +14,42 @@ const APP_MAP = {
   ],
   notepad: ["notepad.exe"],
   explorer: ["explorer.exe"],
-  spotify: [
-    path.join(os.homedir(), "AppData\\Roaming\\Spotify\\Spotify.exe"),
-    "C:\\Program Files\\WindowsApps\\Spotify*"
-  ],
+  spotify: [path.join(os.homedir(), "AppData\\Roaming\\Spotify\\Spotify.exe")],
   discord: [path.join(os.homedir(), "AppData\\Local\\Discord\\Update.exe")],
   vscode: [
     path.join(os.homedir(), "AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"),
-    "C:\\Program Files\\Microsoft VS Code\\Code.exe",
-    path.join(os.homedir(), "AppData\\Local\\Programs\\cursor\\Cursor.exe")
+    "C:\\Program Files\\Microsoft VS Code\\Code.exe"
+  ],
+  visualstudio: [
+    "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\devenv.exe",
+    "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\Common7\\IDE\\devenv.exe",
+    "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\IDE\\devenv.exe",
+    "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\Common7\\IDE\\devenv.exe"
   ],
   cursor: [path.join(os.homedir(), "AppData\\Local\\Programs\\cursor\\Cursor.exe")],
   calculator: ["calc.exe"],
   cmd: ["cmd.exe"],
   powershell: ["powershell.exe"],
-  settings: ["ms-settings:"]
+  settings: ["ms-settings:"],
+  whatsapp: [
+    path.join(os.homedir(), "AppData\\Local\\WhatsApp\\WhatsApp.exe"),
+    path.join(os.homedir(), "AppData\\Local\\Programs\\WhatsApp\\WhatsApp.exe")
+  ],
+  opera: [
+    path.join(os.homedir(), "AppData\\Local\\Programs\\Opera GX\\opera.exe"),
+    "C:\\Program Files\\Opera GX\\opera.exe",
+    "C:\\Program Files\\Opera\\opera.exe"
+  ],
+  youtube: ["https://www.youtube.com"],
+  github: ["https://github.com"]
 };
+
+const WHATSAPP_STORE_APP =
+  "shell:AppsFolder\\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App";
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function runDetached(command, args = []) {
   return new Promise((resolve, reject) => {
@@ -50,9 +70,11 @@ function runDetached(command, args = []) {
 
 function runShell(command) {
   return new Promise((resolve, reject) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-Command", command], {
-      windowsHide: true
-    });
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+      { windowsHide: true }
+    );
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (c) => {
@@ -76,8 +98,53 @@ function firstExisting(candidates = []) {
   return null;
 }
 
+function psQuote(text) {
+  return `'${String(text ?? "").replace(/'/g, "''")}'`;
+}
+
+/**
+ * Pega texto por portapapeles (soporta acentos mejor que SendKeys).
+ */
+async function pasteText(text, { enter = false, delayMs = 120 } = {}) {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+$w = New-Object -ComObject WScript.Shell
+[System.Windows.Forms.Clipboard]::SetText(${psQuote(text)})
+Start-Sleep -Milliseconds ${delayMs}
+$w.SendKeys('^v')
+Start-Sleep -Milliseconds 180
+${enter ? "$w.SendKeys('{ENTER}')" : ""}
+`;
+  await runShell(script);
+}
+
+async function focusProcess(processNames = []) {
+  const names = processNames.map((n) => psQuote(n)).join(",");
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class JarvisWin {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+$names = @(${names})
+$p = Get-Process | Where-Object { $names -contains $_.ProcessName -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+if (-not $p) { exit 0 }
+[JarvisWin]::ShowWindow($p.MainWindowHandle, 9) | Out-Null
+[JarvisWin]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+`;
+  await runShell(script);
+}
+
 async function openApp(name) {
   const key = String(name || "").toLowerCase().trim();
+
+  if (key === "youtube" || key === "github") {
+    return openUrl(APP_MAP[key][0]);
+  }
+
   const candidates = APP_MAP[key];
   if (!candidates) {
     return { ok: false, message: `No conozco la app "${name}".` };
@@ -96,16 +163,53 @@ async function openApp(name) {
     }
   }
 
+  if (key === "whatsapp") {
+    const exe = firstExisting(candidates);
+    if (exe) {
+      await runDetached(exe, []);
+      return { ok: true, message: "Abrí WhatsApp." };
+    }
+    try {
+      await runShell(`Start-Process "${WHATSAPP_STORE_APP}"`);
+      return { ok: true, message: "Abrí WhatsApp." };
+    } catch {
+      await openUrl("https://web.whatsapp.com");
+      return { ok: true, message: "Abrí WhatsApp Web." };
+    }
+  }
+
+  if (key === "opera") {
+    try {
+      await runShell('Start-Process "opera"');
+      return { ok: true, message: "Abrí Opera." };
+    } catch {
+      const exe = firstExisting(candidates);
+      if (exe) {
+        await runDetached(exe, []);
+        return { ok: true, message: "Abrí Opera." };
+      }
+    }
+  }
+
   const exe = firstExisting(candidates);
   if (exe) {
     await runDetached(exe, []);
     return { ok: true, message: `Abrí ${key}.` };
   }
 
-  // Fallback: Start-Process por nombre
+  // Apps del sistema en PATH (calc, notepad, etc.)
+  const pathLaunch = {
+    calculator: "calc.exe",
+    notepad: "notepad.exe",
+    explorer: "explorer.exe",
+    cmd: "cmd.exe",
+    powershell: "powershell.exe"
+  };
+
   try {
-    await runShell(`Start-Process "${key}"`);
-    return { ok: true, message: `Intenté abrir ${key}.` };
+    const launchName = pathLaunch[key] || candidates[0] || key;
+    await runShell(`Start-Process ${psQuote(launchName)}`);
+    return { ok: true, message: `Abrí ${key}.` };
   } catch {
     return { ok: false, message: `No pude abrir ${key}.` };
   }
@@ -116,7 +220,7 @@ async function openUrl(url) {
   if (!/^https?:\/\//i.test(safe)) {
     return { ok: false, message: "URL inválida." };
   }
-  await runShell(`Start-Process "${safe.replace(/"/g, "")}"`);
+  await runShell(`Start-Process ${psQuote(safe)}`);
   return { ok: true, message: "Abrí el enlace." };
 }
 
@@ -125,24 +229,44 @@ async function openPath(targetPath) {
   if (!safe || !fs.existsSync(safe)) {
     return { ok: false, message: "No encontré esa ruta." };
   }
-  await runShell(`Start-Process "${safe.replace(/"/g, '`"')}"`);
+  await runShell(`Start-Process ${psQuote(safe)}`);
   return { ok: true, message: "Listo, abrí la ruta." };
 }
 
-async function searchWeb(query) {
-  const q = encodeURIComponent(String(query || "").trim());
+async function searchWeb(query, { browser, type } = {}) {
+  const q = String(query || "").trim();
   if (!q) return { ok: false, message: "¿Qué busco?" };
-  return openUrl(`https://www.google.com/search?q=${q}`);
+  void browser;
+  const encoded = encodeURIComponent(q);
+  const kind = String(type || "web").toLowerCase();
+  const urls = {
+    web: `https://www.google.com/search?q=${encoded}`,
+    images: `https://www.google.com/search?tbm=isch&q=${encoded}`,
+    videos: `https://www.google.com/search?tbm=vid&q=${encoded}`,
+    news: `https://www.google.com/search?tbm=nws&q=${encoded}`,
+    shopping: `https://www.google.com/search?tbm=shop&q=${encoded}`,
+    maps: `https://www.google.com/maps/search/?api=1&query=${encoded}`,
+    scholar: `https://scholar.google.com/scholar?q=${encoded}`,
+    duck: `https://duckduckgo.com/?q=${encoded}`
+  };
+  const url = urls[kind] || urls.web;
+  return openUrl(url).then((r) => ({
+    ok: r.ok,
+    message: r.ok ? `Busqué ${q}.` : r.message
+  }));
 }
+
+/**
+ * WhatsApp está en ./whatsapp.js (evita dependencia circular).
+ */
 
 async function setVolume({ level, mute, delta } = {}) {
   if (typeof mute === "boolean") {
-    const flag = mute ? 1 : 0;
     await runShell(`(New-Object -ComObject WScript.Shell).SendKeys([char]173)`);
-    // Toggle mute is unreliable twice; use nircmd-free approach via AudioDeviceCmdlets not available.
-    // Prefer key simulation only when mute requested:
-    void flag;
-    return { ok: true, message: mute ? "Silencio activado (tecla mute)." : "Intenté quitar silencio (tecla mute)." };
+    return {
+      ok: true,
+      message: mute ? "Silencio activado." : "Cambié el silencio."
+    };
   }
 
   if (typeof delta === "number") {
@@ -155,7 +279,6 @@ async function setVolume({ level, mute, delta } = {}) {
   }
 
   if (typeof level === "number") {
-    // Approximate: mute-ish reset then raise. Without paid libs we approximate with key presses.
     const steps = Math.max(0, Math.min(50, Math.round(Number(level) / 2)));
     await runShell(
       `$w = New-Object -ComObject WScript.Shell; 1..50 | ForEach-Object { $w.SendKeys([char]174); Start-Sleep -Milliseconds 15 }; 1..${steps} | ForEach-Object { $w.SendKeys([char]175); Start-Sleep -Milliseconds 15 }`
@@ -172,7 +295,9 @@ async function lockPc() {
 }
 
 async function sleepPc() {
-  await runShell("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState('Suspend',$false,$false)");
+  await runShell(
+    "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState('Suspend',$false,$false)"
+  );
   return { ok: true, message: "Suspendiendo la PC." };
 }
 
@@ -186,7 +311,7 @@ $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-$bmp.Save('${out.replace(/'/g, "''")}')
+$bmp.Save(${psQuote(out)})
 $g.Dispose(); $bmp.Dispose()
 `);
   return { ok: true, message: `Captura guardada en ${out}`, path: out };
@@ -205,16 +330,163 @@ function tellDate() {
   return { ok: true, message: `Hoy es ${date}.` };
 }
 
+async function searchYoutube(query) {
+  const q = String(query || "").trim();
+  if (!q) return openUrl("https://www.youtube.com");
+  return openUrl(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`);
+}
+
+async function openFolder(name) {
+  const key = String(name || "").toLowerCase().trim();
+  const map = {
+    desktop: path.join(os.homedir(), "Desktop"),
+    escritorio: path.join(os.homedir(), "Desktop"),
+    downloads: path.join(os.homedir(), "Downloads"),
+    descargas: path.join(os.homedir(), "Downloads"),
+    documents: path.join(os.homedir(), "Documents"),
+    documentos: path.join(os.homedir(), "Documents"),
+    pictures: path.join(os.homedir(), "Pictures"),
+    imagenes: path.join(os.homedir(), "Pictures"),
+    music: path.join(os.homedir(), "Music"),
+    musica: path.join(os.homedir(), "Music"),
+    videos: path.join(os.homedir(), "Videos"),
+    home: os.homedir(),
+    jarvis: path.join("C:", "Git", "Personal", "Jarvis")
+  };
+  const target = map[key];
+  if (!target) return { ok: false, message: "No conozco esa carpeta." };
+  return openPath(target);
+}
+
+async function getWeather(city = "Guatemala") {
+  const place = encodeURIComponent(String(city || "Guatemala").trim() || "Guatemala");
+  try {
+    const res = await fetch(`https://wttr.in/${place}?format=j1`, {
+      headers: { "User-Agent": "Jarvis/1.0" }
+    });
+    if (!res.ok) throw new Error(`wttr ${res.status}`);
+    const data = await res.json();
+    const current = data.current_condition?.[0];
+    const area = data.nearest_area?.[0]?.areaName?.[0]?.value || city;
+    const temp = current?.temp_C;
+    const desc = current?.lang_es?.[0]?.value || current?.weatherDesc?.[0]?.value || "";
+    const feels = current?.FeelsLikeC;
+    return {
+      ok: true,
+      message: `En ${area} hay ${desc.toLowerCase()}, ${temp} grados, sensación de ${feels}.`
+    };
+  } catch {
+    return openUrl(`https://wttr.in/${place}`).then(() => ({
+      ok: true,
+      message: `Abrí el clima de ${city}.`
+    }));
+  }
+}
+
+async function batteryStatus() {
+  try {
+    const raw = await runShell(
+      `(Get-CimInstance Win32_Battery | Select-Object -First 1 | ForEach-Object { \"$($_.EstimatedChargeRemaining)|$($_.BatteryStatus)\" })`
+    );
+    if (!raw) return { ok: true, message: "No detecté batería, talvez estás en escritorio." };
+    const [pct, status] = raw.split("|");
+    const charging = Number(status) === 2 ? "cargando" : "en batería";
+    return { ok: true, message: `Batería al ${pct} por ciento, ${charging}.` };
+  } catch {
+    return { ok: false, message: "No pude leer la batería." };
+  }
+}
+
+async function systemStatus() {
+  try {
+    const raw = await runShell(`
+$os = Get-CimInstance Win32_OperatingSystem
+$free = [math]::Round($os.FreePhysicalMemory/1MB,1)
+$total = [math]::Round($os.TotalVisibleMemorySize/1MB,1)
+$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+\"$cpu|$free|$total\"
+`);
+    const [cpu, free, total] = raw.split("|");
+    return {
+      ok: true,
+      message: `CPU al ${Math.round(Number(cpu) || 0)} por ciento. Memoria libre ${free} de ${total} GB.`
+    };
+  } catch {
+    return { ok: false, message: "No pude leer el estado del sistema." };
+  }
+}
+
+async function saveNote(text) {
+  const note = String(text || "").trim();
+  if (!note) return { ok: false, message: "¿Qué anoto?" };
+  const file = path.join(os.homedir(), "Documents", "Jarvis-Notas.txt");
+  const line = `[${new Date().toLocaleString("es-GT")}] ${note}\n`;
+  fs.appendFileSync(file, line, "utf8");
+  return { ok: true, message: "Anotado en tus documentos.", path: file };
+}
+
+async function readClipboard() {
+  try {
+    const text = await runShell(
+      "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetText()"
+    );
+    if (!text) return { ok: true, message: "El portapapeles está vacío." };
+    const short = text.slice(0, 180);
+    return { ok: true, message: `En el portapapeles dice: ${short}` };
+  } catch {
+    return { ok: false, message: "No pude leer el portapapeles." };
+  }
+}
+
+async function typeText(text) {
+  const value = String(text || "").trim();
+  if (!value) return { ok: false, message: "¿Qué escribo?" };
+  await sleep(400);
+  await pasteText(value, { enter: false });
+  return { ok: true, message: "Ya lo escribí." };
+}
+
+async function emptyRecycleBin() {
+  await runShell(
+    "Clear-RecycleBin -Force -ErrorAction SilentlyContinue; if (-not $?) { (New-Object -ComObject Shell.Application).NameSpace(0xA).Items() | ForEach-Object { Remove-Item $_.Path -Recurse -Force -ErrorAction SilentlyContinue } }"
+  );
+  return { ok: true, message: "Vaciar papelera listo." };
+}
+
+function tellJoke() {
+  const jokes = [
+    "¿Por qué el computador fue al médico? Porque tenía un virus.",
+    "No soy perezoso, estoy en modo ahorro de energía.",
+    "Probé ser normal una vez. Los permisos de administrador me lo negaron.",
+    "Mi código funciona... no sé por qué, pero funciona.",
+    "Si la vida te da limones, pídele a Jarvis que busque la receta."
+  ];
+  return { ok: true, message: jokes[Math.floor(Math.random() * jokes.length)] };
+}
+
 module.exports = {
   openApp,
   openUrl,
   openPath,
   searchWeb,
+  searchYoutube,
+  openFolder,
   setVolume,
   lockPc,
   sleepPc,
   screenshot,
   tellTime,
   tellDate,
-  runShell
+  getWeather,
+  batteryStatus,
+  systemStatus,
+  saveNote,
+  readClipboard,
+  typeText,
+  emptyRecycleBin,
+  tellJoke,
+  runShell,
+  pasteText,
+  sleep,
+  APP_MAP
 };

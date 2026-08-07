@@ -7,40 +7,13 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div class="bg"></div>
-  <main class="shell">
-    <header class="top">
-      <div class="brand">
-        <span class="orb" aria-hidden="true"></span>
-        <div>
-          <h1>JARVIS</h1>
-          <p id="statusLine">Asistente local</p>
-        </div>
-      </div>
-      <button id="clearBtn" type="button" title="Limpiar chat">↻</button>
-    </header>
-
-    <section id="messages" class="messages" aria-live="polite"></section>
-
-    <div id="voiceStatus" class="voice-status" hidden>
-      <span class="wave"><i></i><i></i><i></i><i></i></span>
-      <strong id="voiceStatusText">Te escucho...</strong>
-    </div>
-
-    <form id="composer" class="composer">
-      <button id="micBtn" type="button" aria-label="Hablar">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
-      </button>
-      <input id="input" type="text" placeholder="Dile algo a Jarvis..." autocomplete="off" maxlength="500" />
-      <button id="sendBtn" type="submit" aria-label="Enviar">↑</button>
-    </form>
-
-    <footer class="hints">
-      <button type="button" data-cmd="abre chrome">Abre Chrome</button>
-      <button type="button" data-cmd="qué hora es">Hora</button>
-      <button type="button" data-cmd="sube el volumen">Volumen +</button>
-      <button type="button" data-cmd="haz una captura">Captura</button>
-    </footer>
+  <div class="bg" aria-hidden="true"></div>
+  <main class="stage">
+    <p class="brand">JARVIS</p>
+    <button id="orbBtn" class="orb idle" type="button" aria-label="Activar o pausar micrófono"></button>
+    <p id="stateLine" class="state">Iniciando...</p>
+    <p id="heardLine" class="heard" hidden></p>
+    <p class="hint">Prueba: <em>briefing</em> · <em>modo enfoque</em> · <em>modo mañana</em> · <em>resume el portapapeles</em></p>
   </main>
   <script src="/app.js"></script>
 </body>

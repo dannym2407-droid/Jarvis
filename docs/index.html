@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#071018" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <title>Jarvis</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="bg"></div>
+  <main class="app">
+    <header>
+      <div>
+        <p class="brand">JARVIS</p>
+        <p id="statusLine" class="sub">Asistente del teléfono</p>
+      </div>
+      <button id="settingsBtn" type="button" aria-label="Ajustes">⚙</button>
+    </header>
+
+    <section id="messages" class="messages" aria-live="polite"></section>
+
+    <div id="voiceStatus" class="voice" hidden>
+      <span class="wave"></span> Te escucho...
+    </div>
+
+    <div class="chips">
+      <button type="button" data-cmd="qué hora es">Hora</button>
+      <button type="button" data-cmd="motívame">Motivación</button>
+      <button type="button" data-cmd="busca clima Guatemala">Clima</button>
+      <button type="button" data-cmd="abre WhatsApp">WhatsApp</button>
+      <button type="button" data-cmd="abre mapas">Mapas</button>
+      <button type="button" data-cmd="cuéntame un chiste">Chiste</button>
+    </div>
+
+    <form id="form" class="composer">
+      <button id="micBtn" type="button" aria-label="Hablar">🎙</button>
+      <input id="input" type="text" placeholder="Hey Jarvis..." maxlength="900" autocomplete="off" />
+      <button id="sendBtn" type="submit">↑</button>
+    </form>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog" class="sheet">
+      <h2>Tu Jarvis móvil</h2>
+      <label>
+        Tu nombre
+        <input id="userName" type="text" placeholder="Cristopher" />
+      </label>
+      <label>
+        Groq API Key (gratis)
+        <input id="apiKey" type="password" placeholder="gsk_..." autocomplete="off" />
+      </label>
+      <p class="hint">
+        Key gratis en
+        <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">console.groq.com/keys</a>.
+        Queda guardada solo en este teléfono.
+      </p>
+      <p class="hint">
+        Tip: en Chrome/Safari → “Agregar a pantalla de inicio” para usarlo como app.
+      </p>
+      <menu>
+        <button value="cancel" type="submit">Cerrar</button>
+        <button id="saveBtn" value="default" type="submit">Guardar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="./app.js"></script>
+</body>
+</html>

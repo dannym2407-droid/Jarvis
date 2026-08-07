@@ -1,37 +1,54 @@
 const { config } = require("./config");
 
-const SYSTEM_PROMPT = `Eres ${config.assistantName}, el asistente personal de escritorio de ${config.userName}.
-Hablas español claro, cercano y directo (tono guatemalteco informal está bien).
-Controlas una laptop Windows. Responde corto (máximo 2-3 oraciones) porque tu respuesta se lee en voz alta.
-Si el usuario pide una acción del sistema, responde SOLO con JSON en una línea:
-{"action":"NOMBRE","args":{...},"say":"frase corta para decir en voz alta"}
-Acciones disponibles:
-- open_app: args { "name": "chrome|edge|notepad|explorer|spotify|discord|vscode|calculator|cmd|powershell|settings" }
-- open_url: args { "url": "https://..." }
-- open_path: args { "path": "C:\\\\..." }
-- search_web: args { "query": "texto" }
-- volume: args { "level": 0-100 } o { "mute": true|false } o { "delta": -10|10 }
-- lock: args {}
-- sleep: args {}
-- screenshot: args {}
-- tell_time: args {}
-- tell_date: args {}
-- none: cuando solo conversas (usa say para la respuesta hablada)
-Si no hace falta acción, usa action "none".
-No inventes acciones. No uses markdown.`;
+const SYSTEM_PROMPT = `Eres ${config.assistantName}, asistente de voz de ${config.userName} en Windows.
+Habla suelto, natural, confiado, tono guatemalteco informal (bro, va, de una). Sin sonar robot.
+Si conversan: responde en texto libre (1-3 oraciones), cálido y útil.
+Si hay que HACER algo en la PC: responde SOLO un JSON:
+{"action":"NOMBRE","args":{...},"say":"frase natural corta"}
+
+Acciones:
+- whatsapp_message:{contact,message,send:true}
+- close_apps:{}  ← SOLO si dice "todas" / "todo lo abierto"
+- kill_process:{name}
+- mode:{name:morning|focus|coding|chill|gaming|meeting}
+- briefing:{}
+- window:{action:left|right|maximize|minimize}
+- clipboard_ai:{mode:summary|translate|improve|explain}
+- remember:{text} | recall:{}
+- smart_answer:{question}
+- list_processes:{}
+- search_web:{query,type:web|images|videos|news|shopping|maps|scholar|duck}
+- search_youtube|search_maps|search_wikipedia
+- open_app|open_site|open_folder|open_url|open_path
+- volume|media|lock|sleep|screenshot|snip|show_desktop|task_manager
+- weather|battery|system_status|wifi_info
+- note|clipboard|copy_clipboard|type_text
+- empty_recycle|joke|motivation|whoami|crypto|timer
+- coin_flip|dice|password|create_folder|notepad_text
+- settings_page|shutdown|email|news|define|run_cmd
+- tell_time|tell_date|none
+
+Reglas:
+- close_apps SOLO con "todas" o "todo lo abierto"
+- "cierra chrome/spotify/..." => kill_process
+- "modo mañana/enfoque/coding/chill/gaming/reunión" => mode
+- "briefing" => briefing
+- Preguntas generales => none con say útil o smart_answer
+- WhatsApp con contact + message
+- Sin markdown. Ahora: ${new Date().toLocaleString("es-GT")}`;
 
 async function askGroq(userText, history = []) {
   if (!config.groqApiKey) {
     return {
       action: "none",
       args: {},
-      say: "No tengo clave de Groq configurada. Copia .env.example a .env y pega tu API key gratis de console.groq.com."
+      say: "Bro, me falta la clave de Groq en el env."
     };
   }
 
   const messages = [
     { role: "system", content: SYSTEM_PROMPT },
-    ...history.slice(-8),
+    ...history.slice(-14),
     { role: "user", content: userText }
   ];
 
@@ -43,8 +60,8 @@ async function askGroq(userText, history = []) {
     },
     body: JSON.stringify({
       model: config.groqModel,
-      temperature: 0.4,
-      max_tokens: 350,
+      temperature: 0.9,
+      max_tokens: 500,
       messages
     })
   });
@@ -67,13 +84,22 @@ function parseAiReply(raw) {
       return {
         action: parsed.action || "none",
         args: parsed.args || {},
-        say: parsed.say || raw.replace(jsonMatch[0], "").trim() || "Listo."
+        say: String(parsed.say || "").trim() || "Va, listo."
       };
     } catch {
       // fallthrough
     }
   }
-  return { action: "none", args: {}, say: raw || "No te escuché bien." };
+
+  const cleaned = raw
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/[*_`#]/g, "")
+    .trim();
+  return {
+    action: "none",
+    args: {},
+    say: cleaned.slice(0, 450) || "No te agarré bien, repíteme bro."
+  };
 }
 
 module.exports = { askGroq, parseAiReply };

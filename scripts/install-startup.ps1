@@ -7,7 +7,7 @@ $cmdPath = Join-Path $PSScriptRoot "JarvisStartup.cmd"
 @"
 @echo off
 cd /d "$root"
-start "" /min cmd /c "node server.js --greet"
+start "" /min cmd /c "node server.js"
 "@ | Set-Content -Path $cmdPath -Encoding ASCII
 
 $shell = New-Object -ComObject WScript.Shell
@@ -15,7 +15,7 @@ $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $cmdPath
 $shortcut.WorkingDirectory = $root
 $shortcut.WindowStyle = 7
-$shortcut.Description = "Jarvis assistant startup"
+$shortcut.Description = "Jarvis voice assistant startup"
 $shortcut.Save()
 
 Write-Host "Jarvis se iniciara al iniciar sesion."
