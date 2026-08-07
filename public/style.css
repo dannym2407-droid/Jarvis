@@ -144,6 +144,15 @@ html, body {
   font-size: 0.9rem;
   color: var(--muted);
 }
+.badge {
+  letter-spacing: 0.12em;
+  font-size: 0.65rem;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  vertical-align: middle;
+}
 
 .orb {
   width: min(38vw, 210px);

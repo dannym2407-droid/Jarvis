@@ -379,16 +379,25 @@ async function boot() {
   try {
     await api("/api/health");
   } catch {
-    setState("No hay conexión con Jarvis. Corre start.bat");
+    setState("No hay conexión con Jarvis. Corre start-app.bat o start.bat");
     setOrb("paused");
     return;
+  }
+
+  if (window.jarvisDesktop?.isElectron) {
+    const badge = document.getElementById("appBadge");
+    if (badge) badge.hidden = false;
+    window.jarvisDesktop.onToggleListen(() => {
+      if (wakeMode && !muted) stopListening();
+      else startListening();
+    });
   }
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     stream.getTracks().forEach((t) => t.stop());
   } catch {
-    setState("Activa el micrófono del navegador para Jarvis.");
+    setState("Activa el micrófono para Jarvis.");
   }
 
   connectEvents();
@@ -401,6 +410,11 @@ async function boot() {
     const greet = await api("/api/greeting");
     setState(greet.text);
     if (greet.audioUrl) await playAudioUrl(greet.audioUrl);
+    else if (greet.text && window.speechSynthesis) {
+      const u = new SpeechSynthesisUtterance(greet.text);
+      u.lang = "es-MX";
+      window.speechSynthesis.speak(u);
+    }
   } catch {
     // continue
   }

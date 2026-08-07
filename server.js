@@ -258,39 +258,66 @@ async function openPanel() {
   }).unref();
 }
 
-async function boot() {
-  const shouldOpen = !process.argv.includes("--no-open");
+function startServer(options = {}) {
+  const shouldOpen =
+    options.openBrowser === true ||
+    (options.openBrowser !== false &&
+      !process.argv.includes("--no-open") &&
+      !process.env.JARVIS_ELECTRON &&
+      !process.env.ELECTRON_RUN_AS_NODE);
+
   warmVoiceCache().catch(() => {});
 
   const { phoneUrls } = require("./src/remote/lan");
   const { startTelegramBot } = require("./src/remote/telegram");
 
-  server.listen(config.port, config.host, async () => {
-    console.log(`${config.assistantName} listo → http://127.0.0.1:${config.port}`);
-    const phones = phoneUrls();
-    if (phones.length) {
-      console.log("Teléfono (misma WiFi):");
-      for (const u of phones) console.log(`  ${u}`);
-    }
-    if (!config.groqApiKey) {
-      console.log("Aviso: falta GROQ_API_KEY en .env");
-    }
-    startTelegramBot();
-    try {
-      const { startProactive } = require("./src/sense/proactive");
-      startProactive(60000);
-      console.log("Radar proactivo ON");
-    } catch (error) {
-      console.warn("[proactive]", error.message);
-    }
-    if (shouldOpen) {
-      try {
-        openPanel();
-      } catch (error) {
-        console.error("[open]", error.message);
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(config.port, config.host, async () => {
+      console.log(`${config.assistantName} listo → http://127.0.0.1:${config.port}`);
+      const phones = phoneUrls();
+      if (phones.length) {
+        console.log("Teléfono (misma WiFi):");
+        for (const u of phones) console.log(`  ${u}`);
       }
-    }
+      if (!config.groqApiKey) {
+        console.log("Aviso: falta GROQ_API_KEY en .env");
+      }
+      startTelegramBot();
+      try {
+        const { startProactive } = require("./src/sense/proactive");
+        startProactive(60000);
+        console.log("Radar proactivo ON");
+      } catch (error) {
+        console.warn("[proactive]", error.message);
+      }
+      if (shouldOpen) {
+        try {
+          openPanel();
+        } catch (error) {
+          console.error("[open]", error.message);
+        }
+      }
+      resolve({
+        port: config.port,
+        host: config.host,
+        url: `http://127.0.0.1:${config.port}/`
+      });
+    });
   });
 }
 
-boot();
+function stopServer() {
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+  });
+}
+
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error("[boot]", error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { startServer, stopServer, server };

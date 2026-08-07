@@ -31,12 +31,12 @@
     </aside>
 
     <main class="stage">
-      <p class="brand">JARVIS</p>
+      <p class="brand">JARVIS <span id="appBadge" class="badge" hidden>APP</span></p>
       <button id="orbBtn" class="orb idle" type="button" aria-label="Pausar o reanudar micrófono"></button>
       <p id="stateLine" class="state">Iniciando...</p>
       <p id="heardLine" class="heard" hidden></p>
       <p id="suggestLine" class="suggest" hidden></p>
-      <p class="hint">Di <strong>Hey Jarvis</strong> + orden · el orbe solo pausa</p>
+      <p class="hint">Di <strong>Hey Jarvis</strong> + orden · orbe pausa · <strong>Ctrl+Shift+J</strong> escucha</p>
       <form id="textForm" class="text-form" autocomplete="off">
         <input id="textInput" type="text" placeholder="git status · por qué no funciona · abre Cursor..." maxlength="700" />
         <button type="submit">Enviar</button>
