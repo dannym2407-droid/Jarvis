@@ -125,9 +125,17 @@ function createTray() {
         }
       }
     },
+    {
+      label: "Siempre visible",
+      type: "checkbox",
+      checked: false,
+      click: (item) => {
+        if (mainWindow) mainWindow.setAlwaysOnTop(Boolean(item.checked));
+      }
+    },
     { type: "separator" },
     {
-      label: "Abrir en navegador (opcional)",
+      label: "Abrir panel web (opcional)",
       click: () => shell.openExternal("http://127.0.0.1:8787/")
     },
     { type: "separator" },
