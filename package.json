@@ -1,0 +1,17 @@
+{
+  "name": "jarvis",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Asistente de voz local estilo Jarvis para Windows",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "greet": "node scripts/greet-once.js",
+    "install-startup": "powershell -ExecutionPolicy Bypass -File scripts/install-startup.ps1",
+    "uninstall-startup": "powershell -ExecutionPolicy Bypass -File scripts/uninstall-startup.ps1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
