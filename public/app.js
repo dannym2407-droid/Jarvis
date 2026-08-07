@@ -5,13 +5,17 @@ const textForm = document.getElementById("textForm");
 const textInput = document.getElementById("textInput");
 
 let busy = false;
+let wakeRecognition = null;
+let wakeMode = false;
+let muted = false;
 let currentAudio = null;
-let recording = false;
-let mediaStream = null;
-let mediaRecorder = null;
-let recChunks = [];
-let recordStartedAt = 0;
-let autoStopTimer = null;
+let networkFailCount = 0;
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const WAKE_RE =
+  /\b((hey|oye|ok|okay|hola|ei|ey)\s+)?(jarvis|yarvis|jarviz|yarbis|jarbi|jarbis|harvey|jarves|llaves|yavis)\b/i;
+const COMMAND_RE =
+  /\b(abre|abrir|busca|buscar|google|escribe|mandale|manda|envia|enviale|cierra|cerrar|bloquea|captura|sube|baja|volumen|whatsapp|wasap|hora|fecha|cursor|chrome|visual|spotify|youtube|clima|tiempo|bateria|batería|anota|nota|chiste|papelera|descargas|escritorio|portapapeles|sistema|wifi|mapa|wikipedia|noticias|temporizador|timer|bitcoin|ethereum|gmail|netflix|tiktok|motiv|apag|reinic|dado|moneda|contraseña|password|camara|cámara|paint|procesos|define|carpeta|imagenes|imágenes|videos|aplicaciones|apps|briefing|modo|rutina|brillo|disco|traduce|archivo|pendiente|recuerdame|avisame|avísame|pon|quita|minimiza|maximiza|duerme|duérmete|reinicia|apaga)\b/i;
 
 function setOrb(mode) {
   orbBtn.classList.remove("idle", "listening", "thinking", "speaking", "paused");
@@ -76,33 +80,51 @@ async function api(path, body) {
   return data;
 }
 
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = String(reader.result || "");
-      resolve(result.includes(",") ? result.split(",")[1] : result);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+function extractAfterWake(transcript) {
+  const text = String(transcript || "").trim();
+  if (!WAKE_RE.test(text)) return null;
+  return text
+    .replace(WAKE_RE, " ")
+    .replace(/^[,\s.:\-]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-async function transcribeBlob(blob) {
-  const audioBase64 = await blobToBase64(blob);
-  const data = await api("/api/transcribe", {
-    audioBase64,
-    mime: blob.type || "audio/webm"
-  });
-  return String(data.text || "").trim();
-}
-
-function pickMime() {
-  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
-  for (const t of types) {
-    if (window.MediaRecorder?.isTypeSupported?.(t)) return t;
+function shouldHandle(transcript) {
+  const text = String(transcript || "").trim();
+  if (!text || text.length < 2) return null;
+  if (WAKE_RE.test(text)) {
+    const after = extractAfterWake(text);
+    return after || "__WAKE_ONLY__";
   }
-  return "";
+  if (COMMAND_RE.test(text)) return text;
+  // Frase clara mientras está escuchando (evita ruido corto)
+  if (wakeMode && text.split(/\s+/).length >= 2 && text.length >= 6 && text.length < 220) {
+    return text;
+  }
+  return null;
+}
+
+function pauseMic() {
+  try {
+    wakeRecognition?.stop();
+  } catch {
+    // ignore
+  }
+}
+
+function resumeMicSoon(delayMs = 400) {
+  if (!wakeMode || muted) return;
+  setTimeout(() => {
+    if (!wakeMode || muted || busy) return;
+    try {
+      wakeRecognition.start();
+      setOrb("listening");
+      setState("Te escucho...");
+    } catch {
+      // already started
+    }
+  }, delayMs);
 }
 
 async function runVoiceCommand(text) {
@@ -110,6 +132,7 @@ async function runVoiceCommand(text) {
   if (!value || busy) return;
 
   busy = true;
+  pauseMic();
   stopAudio();
   showHeard(value);
   setOrb("thinking");
@@ -129,7 +152,7 @@ async function runVoiceCommand(text) {
 
     setState(result.say || "Listo.");
     if (result.audioUrl) await playAudioUrl(result.audioUrl);
-  } catch (error) {
+  } catch {
     const msg = "Se me trabó, bro. Prueba otra vez.";
     setState(msg);
     try {
@@ -140,121 +163,134 @@ async function runVoiceCommand(text) {
     }
   } finally {
     busy = false;
-    setOrb("idle");
-    setState("Toca el orbe, habla, toca otra vez");
-  }
-}
-
-async function ensureMic() {
-  if (mediaStream) {
-    const live = mediaStream.getTracks().some((t) => t.readyState === "live");
-    if (live) return mediaStream;
-  }
-  mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
+    if (wakeMode && !muted) {
+      setOrb("listening");
+      setState("Te escucho...");
+      resumeMicSoon(500);
+    } else {
+      setOrb(muted ? "paused" : "idle");
     }
-  });
-  return mediaStream;
+  }
 }
 
-async function startRecording() {
-  if (busy || recording) return;
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    setState("Este navegador no puede grabar. Usa Chrome o Edge.");
+function createRecognizer() {
+  const rec = new SpeechRecognition();
+  rec.lang = "es-MX";
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 3;
+  return rec;
+}
+
+function stopListening() {
+  wakeMode = false;
+  muted = true;
+  pauseMic();
+  setOrb("paused");
+  setState("En pausa. Toca el orbe para volver a escuchar.");
+}
+
+function startListening() {
+  if (!SpeechRecognition) {
+    setState("Usa Chrome o Edge para el micrófono continuo.");
+    setOrb("paused");
     return;
   }
 
-  try {
-    const stream = await ensureMic();
-    recChunks = [];
-    const mime = pickMime();
-    mediaRecorder = mime
-      ? new MediaRecorder(stream, { mimeType: mime })
-      : new MediaRecorder(stream);
+  muted = false;
+  wakeMode = true;
+  networkFailCount = 0;
+  setOrb("listening");
+  setState("Te escucho... habla cuando quieras");
 
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) recChunks.push(e.data);
+  if (!wakeRecognition) {
+    wakeRecognition = createRecognizer();
+
+    wakeRecognition.onresult = (event) => {
+      if (busy || muted) return;
+
+      let finalText = "";
+      let interimText = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const chunk = event.results[i][0]?.transcript || "";
+        if (event.results[i].isFinal) finalText += `${chunk} `;
+        else interimText += `${chunk} `;
+      }
+
+      const live = (finalText || interimText).trim();
+      if (live) showHeard(live);
+      if (!finalText.trim()) return;
+
+      networkFailCount = 0;
+      const decision = shouldHandle(finalText.trim());
+      if (!decision) return;
+
+      if (decision === "__WAKE_ONLY__") {
+        setState("Dime...");
+        pauseMic();
+        api("/api/speak", { text: "Dime.", browserAudio: true })
+          .then((r) => playAudioUrl(r.audioUrl))
+          .finally(() => resumeMicSoon(450));
+        return;
+      }
+
+      runVoiceCommand(decision);
     };
 
-    mediaRecorder.start(250);
-    recording = true;
-    recordStartedAt = Date.now();
-    setOrb("listening");
-    setState("Escuchando... habla y toca otra vez para enviar");
-    showHeard("");
-
-    clearTimeout(autoStopTimer);
-    autoStopTimer = setTimeout(() => {
-      if (recording) stopRecordingAndSend();
-    }, 20000);
-  } catch (error) {
-    const denied = /NotAllowed|Permission|Denied/i.test(String(error.name || error.message || ""));
-    setState(
-      denied
-        ? "Activa el micrófono en Chrome (candado → Micrófono → Permitir) y recarga."
-        : `No pude abrir el mic: ${error.message || error}`
-    );
-    setOrb("paused");
-  }
-}
-
-async function stopRecordingAndSend() {
-  clearTimeout(autoStopTimer);
-  if (!recording || !mediaRecorder) return;
-  recording = false;
-  setOrb("thinking");
-  setState("Entendiendo lo que dijiste...");
-
-  const blob = await new Promise((resolve) => {
-    mediaRecorder.onstop = () => {
-      resolve(new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" }));
+    wakeRecognition.onerror = (event) => {
+      const err = event.error || "";
+      if (err === "not-allowed") {
+        setState("Permiso de micrófono denegado. Actívalo en Chrome y recarga.");
+        stopListening();
+        return;
+      }
+      // "network" / "no-speech" / "aborted" → reinicia en silencio (sin spam)
+      if (err === "network") {
+        networkFailCount += 1;
+        if (networkFailCount === 3) {
+          setState("Reconectando micrófono...");
+        }
+        if (networkFailCount >= 8) {
+          setState("Chrome perdió el mic online. Toca el orbe para reintentar.");
+          stopListening();
+        }
+      }
     };
-    try {
-      if (mediaRecorder.state !== "inactive") mediaRecorder.stop();
-      else resolve(new Blob(recChunks, { type: "audio/webm" }));
-    } catch {
-      resolve(new Blob(recChunks, { type: "audio/webm" }));
-    }
-  });
 
-  const elapsed = Date.now() - recordStartedAt;
-  if (elapsed < 450 || blob.size < 600) {
-    setOrb("idle");
-    setState("Muy corto. Toca, habla 1–2 segundos, toca otra vez.");
-    return;
+    wakeRecognition.onend = () => {
+      if (!wakeMode || muted || busy) return;
+      const wait = networkFailCount > 2 ? 900 : 280;
+      setTimeout(() => {
+        if (!wakeMode || muted || busy) return;
+        try {
+          wakeRecognition.start();
+          if (networkFailCount > 0 && networkFailCount < 8) {
+            setOrb("listening");
+            setState("Te escucho...");
+          }
+        } catch {
+          // ignore
+        }
+      }, wait);
+    };
   }
 
   try {
-    const text = await transcribeBlob(blob);
-    if (!text) {
-      setOrb("idle");
-      setState("No te escuché. Intenta otra vez más cerca.");
-      return;
-    }
-    await runVoiceCommand(text);
-  } catch (error) {
-    setOrb("paused");
-    setState(
-      /GROQ|API|401|403/i.test(String(error.message || ""))
-        ? "Falta o falló GROQ_API_KEY en tu .env — sin eso no puedo transcribir."
-        : error.message || "Falló la transcripción"
-    );
+    wakeRecognition.start();
+  } catch {
+    // already running
   }
 }
 
 orbBtn.addEventListener("click", () => {
-  if (busy) return;
-  if (recording) stopRecordingAndSend();
-  else startRecording();
+  if (wakeMode && !muted) stopListening();
+  else startListening();
 });
 
 textForm?.addEventListener("submit", (e) => {
   e.preventDefault();
   const value = textInput.value.trim();
-  if (!value || busy || recording) return;
+  if (!value || busy) return;
   textInput.value = "";
   runVoiceCommand(value);
 });
@@ -268,6 +304,14 @@ async function boot() {
     return;
   }
 
+  // Pedir mic una vez (ayuda a Chrome)
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+  } catch {
+    setState("Activa el micrófono del navegador para Jarvis.");
+  }
+
   setOrb("speaking");
   setState("Saludando...");
   try {
@@ -278,8 +322,7 @@ async function boot() {
     // continue
   }
 
-  setOrb("idle");
-  setState("Toca el orbe, habla, toca otra vez");
+  startListening();
 }
 
 boot();
