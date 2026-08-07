@@ -189,6 +189,43 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (req.method === "GET" && url.pathname === "/api/radar") {
+      const { radarPayload } = require("./src/sense/workspace");
+      const data = await radarPayload();
+      return sendJson(res, 200, data);
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/events") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive"
+      });
+      res.write(`data: ${JSON.stringify({ type: "hello", at: new Date().toISOString() })}\n\n`);
+      const { subscribe, getLastSuggestion } = require("./src/sense/proactive");
+      const last = getLastSuggestion();
+      if (last) res.write(`data: ${JSON.stringify(last)}\n\n`);
+      const unsub = subscribe((event) => {
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          // ignore
+        }
+      });
+      const ping = setInterval(() => {
+        try {
+          res.write(`: ping\n\n`);
+        } catch {
+          // ignore
+        }
+      }, 25000);
+      req.on("close", () => {
+        clearInterval(ping);
+        unsub();
+      });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/clear") {
       clearHistory();
       return sendJson(res, 200, { ok: true });
@@ -239,6 +276,13 @@ async function boot() {
       console.log("Aviso: falta GROQ_API_KEY en .env");
     }
     startTelegramBot();
+    try {
+      const { startProactive } = require("./src/sense/proactive");
+      startProactive(60000);
+      console.log("Radar proactivo ON");
+    } catch (error) {
+      console.warn("[proactive]", error.message);
+    }
     if (shouldOpen) {
       try {
         openPanel();

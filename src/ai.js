@@ -37,6 +37,10 @@ ACCIONES (elige la mejor):
 - desktop_note:{title,content}|start_search:{query}|qr:{text}|password_copy
 - sticky_notes|bluetooth|wifi_settings|joke|motivation|whoami|coin_flip|dice|password
 - tell_time|tell_date|none
+- git_status:{project?} | git_commit:{project?,message?} | git_push:{project?,branch?}
+- diagnose:{} | radar:{} | workspace:{}
+- delegate_code:{project,prompt,editor:cursor|vscode,notify:true}
+  ← órdenes largas: "abre Cursor y trabaja en mi portafolio, avísame"
 
 REGLAS CLAVE:
 1. Prefiere EJECUTAR (acción) sobre solo explicar.
@@ -44,8 +48,11 @@ REGLAS CLAVE:
 3. App desconocida => launch_any o open_app con el nombre que dijo.
 4. close_apps SOLO con "todas". "cierra chrome" => kill_process.
 5. Comandos shell peligrosos: bloquear format/rm -rf/etc en run_cmd (ya hay filtro).
-6. say: 1 frase corta para voz.
-7. Ahora: ${new Date().toLocaleString("es-GT")}`;
+6. "qué cambios tengo" / git status => git_status; commit => git_commit; push => git_push.
+7. "por qué no funciona" => diagnose. "radar" => radar.
+8. Misiones largas con Cursor/VS Code => delegate_code.
+9. say: 1-3 frases cortas para voz (git status puede ser un poco más largo).
+10. Ahora: ${new Date().toLocaleString("es-GT")}`;
 
 async function askGroq(userText, history = []) {
   if (!config.groqApiKey) {

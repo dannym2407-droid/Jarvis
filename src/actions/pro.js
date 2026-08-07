@@ -226,36 +226,14 @@ async function smartAnswer(question) {
 }
 
 async function rememberFact(text) {
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const file = path.join(config.root, "data", "memory.json");
-  let memory = [];
-  try {
-    memory = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!Array.isArray(memory)) memory = [];
-  } catch {
-    memory = [];
-  }
-  memory.push({ at: new Date().toISOString(), text: String(text || "").trim() });
-  memory = memory.slice(-50);
-  fs.writeFileSync(file, JSON.stringify(memory, null, 2), "utf8");
-  return { ok: true, message: "Quedó en mi memoria." };
+  const { rememberFact: save } = require("../memory/store");
+  save(String(text || "").trim(), "facts");
+  return { ok: true, message: "Quedó en mi memoria inteligente." };
 }
 
 async function recallMemory() {
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const file = path.join(config.root, "data", "memory.json");
-  try {
-    const memory = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!Array.isArray(memory) || !memory.length) {
-      return { ok: true, message: "Aún no tengo nada guardado en memoria." };
-    }
-    const last = memory.slice(-3).map((m) => m.text).join(". ");
-    return { ok: true, message: `Recuerdo esto: ${last}` };
-  } catch {
-    return { ok: true, message: "Aún no tengo memoria guardada." };
-  }
+  const { recallSummary } = require("../memory/store");
+  return { ok: true, message: recallSummary() };
 }
 
 module.exports = {

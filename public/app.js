@@ -1,6 +1,7 @@
 const orbBtn = document.getElementById("orbBtn");
 const stateLine = document.getElementById("stateLine");
 const heardLine = document.getElementById("heardLine");
+const suggestLine = document.getElementById("suggestLine");
 const textForm = document.getElementById("textForm");
 const textInput = document.getElementById("textInput");
 
@@ -10,12 +11,13 @@ let wakeMode = false;
 let muted = false;
 let currentAudio = null;
 let networkFailCount = 0;
+let armedUntil = 0; // ventana post "Hey Jarvis"
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const WAKE_RE =
   /\b((hey|oye|ok|okay|hola|ei|ey)\s+)?(jarvis|yarvis|jarviz|yarbis|jarbi|jarbis|harvey|jarves|llaves|yavis)\b/i;
 const COMMAND_RE =
-  /\b(abre|abrir|busca|buscar|google|escribe|mandale|manda|envia|enviale|cierra|cerrar|bloquea|captura|sube|baja|volumen|whatsapp|wasap|hora|fecha|cursor|chrome|visual|spotify|youtube|clima|tiempo|bateria|batería|anota|nota|chiste|papelera|descargas|escritorio|portapapeles|sistema|wifi|mapa|wikipedia|noticias|temporizador|timer|bitcoin|ethereum|gmail|netflix|tiktok|motiv|apag|reinic|dado|moneda|contraseña|password|camara|cámara|paint|procesos|define|carpeta|imagenes|imágenes|videos|aplicaciones|apps|briefing|modo|rutina|brillo|disco|traduce|archivo|pendiente|recuerdame|avisame|avísame|pon|quita|minimiza|maximiza|duerme|duérmete|reinicia|apaga)\b/i;
+  /\b(abre|abrir|busca|buscar|google|escribe|mandale|manda|envia|enviale|cierra|cerrar|bloquea|captura|sube|baja|volumen|whatsapp|wasap|hora|fecha|cursor|chrome|visual|spotify|youtube|clima|tiempo|bateria|batería|anota|nota|chiste|papelera|descargas|escritorio|portapapeles|sistema|wifi|mapa|wikipedia|noticias|temporizador|timer|bitcoin|ethereum|gmail|netflix|tiktok|motiv|apag|reinic|dado|moneda|contraseña|password|camara|cámara|paint|procesos|define|carpeta|imagenes|imágenes|videos|aplicaciones|apps|briefing|modo|rutina|brillo|disco|traduce|archivo|pendiente|recuerdame|avisame|avísame|pon|quita|minimiza|maximiza|duerme|reinicia|apaga|git|commit|push|cambios|diagnost|radar|confirma|cancela|portafolio|portfolio|trabaja|proyecto)\b/i;
 
 function setOrb(mode) {
   orbBtn.classList.remove("idle", "listening", "thinking", "speaking", "paused");
@@ -34,6 +36,16 @@ function showHeard(text) {
   }
   heardLine.hidden = false;
   heardLine.textContent = `"${text}"`;
+}
+
+function showSuggest(text) {
+  if (!text) {
+    suggestLine.hidden = true;
+    suggestLine.textContent = "";
+    return;
+  }
+  suggestLine.hidden = false;
+  suggestLine.textContent = text;
 }
 
 function stopAudio() {
@@ -93,15 +105,19 @@ function extractAfterWake(transcript) {
 function shouldHandle(transcript) {
   const text = String(transcript || "").trim();
   if (!text || text.length < 2) return null;
+
   if (WAKE_RE.test(text)) {
     const after = extractAfterWake(text);
     return after || "__WAKE_ONLY__";
   }
-  if (COMMAND_RE.test(text)) return text;
-  // Frase clara mientras está escuchando (evita ruido corto)
-  if (wakeMode && text.split(/\s+/).length >= 2 && text.length >= 6 && text.length < 220) {
+
+  // Tras "Hey Jarvis", acepta la siguiente frase completa
+  if (Date.now() < armedUntil && text.split(/\s+/).length >= 2) {
     return text;
   }
+
+  if (COMMAND_RE.test(text)) return text;
+  if (/^(si|sí|no|ok|dale|va|confirma|cancela)$/i.test(text)) return text;
   return null;
 }
 
@@ -120,7 +136,7 @@ function resumeMicSoon(delayMs = 400) {
     try {
       wakeRecognition.start();
       setOrb("listening");
-      setState("Te escucho...");
+      setState(Date.now() < armedUntil ? "Dime la orden..." : "Escuchando · di Hey Jarvis");
     } catch {
       // already started
     }
@@ -132,6 +148,7 @@ async function runVoiceCommand(text) {
   if (!value || busy) return;
 
   busy = true;
+  armedUntil = 0;
   pauseMic();
   stopAudio();
   showHeard(value);
@@ -165,7 +182,7 @@ async function runVoiceCommand(text) {
     busy = false;
     if (wakeMode && !muted) {
       setOrb("listening");
-      setState("Te escucho...");
+      setState("Escuchando · di Hey Jarvis");
       resumeMicSoon(500);
     } else {
       setOrb(muted ? "paused" : "idle");
@@ -185,14 +202,15 @@ function createRecognizer() {
 function stopListening() {
   wakeMode = false;
   muted = true;
+  armedUntil = 0;
   pauseMic();
   setOrb("paused");
-  setState("En pausa. Toca el orbe para volver a escuchar.");
+  setState("En pausa. Toca el orbe para escuchar otra vez.");
 }
 
 function startListening() {
   if (!SpeechRecognition) {
-    setState("Usa Chrome o Edge para el micrófono continuo.");
+    setState("Usa Chrome o Edge para voz continua.");
     setOrb("paused");
     return;
   }
@@ -201,7 +219,7 @@ function startListening() {
   wakeMode = true;
   networkFailCount = 0;
   setOrb("listening");
-  setState("Te escucho... habla cuando quieras");
+  setState("Escuchando · di Hey Jarvis");
 
   if (!wakeRecognition) {
     wakeRecognition = createRecognizer();
@@ -226,6 +244,7 @@ function startListening() {
       if (!decision) return;
 
       if (decision === "__WAKE_ONLY__") {
+        armedUntil = Date.now() + 12000;
         setState("Dime...");
         pauseMic();
         api("/api/speak", { text: "Dime.", browserAudio: true })
@@ -244,14 +263,10 @@ function startListening() {
         stopListening();
         return;
       }
-      // "network" / "no-speech" / "aborted" → reinicia en silencio (sin spam)
       if (err === "network") {
         networkFailCount += 1;
-        if (networkFailCount === 3) {
-          setState("Reconectando micrófono...");
-        }
-        if (networkFailCount >= 8) {
-          setState("Chrome perdió el mic online. Toca el orbe para reintentar.");
+        if (networkFailCount >= 10) {
+          setState("Mic online inestable. Toca el orbe para reintentar.");
           stopListening();
         }
       }
@@ -264,10 +279,6 @@ function startListening() {
         if (!wakeMode || muted || busy) return;
         try {
           wakeRecognition.start();
-          if (networkFailCount > 0 && networkFailCount < 8) {
-            setOrb("listening");
-            setState("Te escucho...");
-          }
         } catch {
           // ignore
         }
@@ -279,6 +290,67 @@ function startListening() {
     wakeRecognition.start();
   } catch {
     // already running
+  }
+}
+
+function setBar(id, valId, pct) {
+  const bar = document.getElementById(id);
+  const label = document.getElementById(valId);
+  const n = Math.max(0, Math.min(100, Number(pct) || 0));
+  if (bar) bar.style.width = `${n}%`;
+  if (label) label.textContent = `${n}%`;
+}
+
+function renderRadar(data) {
+  if (!data) return;
+  setBar("cpuBar", "cpuVal", data.cpu);
+  setBar("ramBar", "ramVal", data.ram);
+  setBar("diskBar", "diskVal", data.disk);
+  const project = document.getElementById("projectName");
+  if (project) project.textContent = data.project || "—";
+  const fg = document.getElementById("fgLine");
+  if (fg) fg.textContent = `Foco: ${data.foreground || "—"}`;
+  const git = document.getElementById("gitLine");
+  if (git) {
+    if (!data.git) git.textContent = "Git: —";
+    else if (!data.git.dirty) git.textContent = `Git: limpio (${data.git.branch || "?"})`;
+    else {
+      git.textContent = `Git: ${data.git.files?.length || "?"} cambio(s) · ${data.git.branch || ""}`;
+    }
+  }
+  document.querySelectorAll("#services i[data-k]").forEach((el) => {
+    const key = el.getAttribute("data-k");
+    el.classList.toggle("on", Boolean(data.services?.[key]));
+  });
+}
+
+async function refreshRadar() {
+  try {
+    const data = await api("/api/radar");
+    renderRadar(data);
+  } catch {
+    // ignore
+  }
+}
+
+function connectEvents() {
+  try {
+    const es = new EventSource("/api/events");
+    es.onmessage = async (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "radar" && msg.data) renderRadar(msg.data);
+        if (msg.type === "proactive" && msg.text) {
+          showSuggest(msg.text);
+          setState(msg.text);
+          if (msg.audioUrl && !busy) await playAudioUrl(msg.audioUrl);
+        }
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    // ignore
   }
 }
 
@@ -304,13 +376,16 @@ async function boot() {
     return;
   }
 
-  // Pedir mic una vez (ayuda a Chrome)
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     stream.getTracks().forEach((t) => t.stop());
   } catch {
     setState("Activa el micrófono del navegador para Jarvis.");
   }
+
+  connectEvents();
+  refreshRadar();
+  setInterval(refreshRadar, 20000);
 
   setOrb("speaking");
   setState("Saludando...");

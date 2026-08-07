@@ -8,6 +8,8 @@ const {
   FAIL_PHRASES
 } = require("../voice/tts");
 const { config } = require("../config");
+const { handleConfirmSpeech, getPending } = require("../actions/git");
+const { memoryContextForAi } = require("../memory/store");
 const path = require("node:path");
 
 const history = [];
@@ -48,11 +50,25 @@ const INFO_ACTIONS = new Set([
   "find_file",
   "read_file",
   "list_dir",
-  "countdown"
+  "countdown",
+  "git_status",
+  "git_commit",
+  "git_push",
+  "git_confirm",
+  "git_cancel",
+  "diagnose",
+  "radar",
+  "workspace"
 ]);
 
 function needsAck(action) {
-  return Boolean(action) && action !== "none" && action !== "multi" && !INFO_ACTIONS.has(action);
+  return (
+    Boolean(action) &&
+    action !== "none" &&
+    action !== "multi" &&
+    action !== "delegate_code" &&
+    !INFO_ACTIONS.has(action)
+  );
 }
 
 async function prepareAudio(text) {
@@ -75,19 +91,46 @@ function enrichWhoami(plan) {
 }
 
 async function handleInstruction(text, { speakReply = true, browserAudio = false } = {}) {
-  const input = stripWakeWord(String(text || "").trim());
+  const raw = String(text || "").trim();
+  const input = stripWakeWord(raw);
   if (!input) {
-    const say = "Te escucho, bro. Dime con confianza.";
+    const say = getPending()
+      ? "Sigo esperando tu confirma o cancela."
+      : "Hey, te escucho. Dime la orden.";
     const audioUrl = browserAudio ? await prepareAudio(say) : null;
     if (speakReply && !browserAudio) await speak(say).catch(() => {});
-    return { ok: false, say, audioUrl, result: null };
+    return { ok: true, say, audioUrl, result: null, action: "none" };
   }
 
   history.push({ role: "user", content: input });
 
-  let plan = matchLocalCommand(input);
+  if (getPending()) {
+    const confirmed = await handleConfirmSpeech(input);
+    if (confirmed) {
+      const say = confirmed.message || "Listo.";
+      history.push({ role: "assistant", content: say });
+      const audioUrl = browserAudio ? await prepareAudio(say) : null;
+      if (speakReply && !browserAudio) await speak(say).catch(() => {});
+      return {
+        ok: confirmed.ok !== false,
+        say,
+        audioUrl,
+        action: "git_confirm",
+        result: confirmed
+      };
+    }
+  }
+
+  let plan = matchLocalCommand(raw);
   if (!plan) {
-    plan = await askGroq(input, history.filter((m) => m.role !== "system"));
+    const mem = memoryContextForAi();
+    plan = await askGroq(input, [
+      {
+        role: "system",
+        content: `Memoria Jarvis: ${JSON.stringify(mem).slice(0, 900)}`
+      },
+      ...history.filter((m) => m.role !== "system")
+    ]);
   }
   plan = enrichWhoami(plan);
 
@@ -96,8 +139,9 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
   let ackAudioUrl = null;
   let ackPromise = Promise.resolve();
 
-  if (needsAck(action)) {
-    ack = plan.say && plan.say.length < 80 ? plan.say : pick(ACK_PHRASES);
+  if (needsAck(action) || action === "delegate_code") {
+    ack = plan.say && plan.say.length < 100 ? plan.say : pick(ACK_PHRASES);
+    if (action === "delegate_code") ack = plan.say || "Voy con esa misión larga.";
     if (browserAudio) {
       ackAudioUrl = await prepareAudio(ack);
     } else if (speakReply) {
@@ -115,15 +159,9 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
       plan.say ||
       result.message ||
       pick(["Listo, hice todo eso.", "Ya corrí los pasos.", "Hecho, bro."]);
-    if (result.ok === false) {
-      say = result.message || "Se me trabó a mitad del plan.";
-    }
-  } else if (INFO_ACTIONS.has(action)) {
-    // Combina dato real + estilo libre si venía say
+    if (result.ok === false) say = result.message || "Se me trabó a mitad del plan.";
+  } else if (INFO_ACTIONS.has(action) || action === "delegate_code") {
     say = result.message || plan.say || pick(DONE_PHRASES);
-    if (plan.say && result.message && plan.say !== result.message && plan.say.length < 120) {
-      say = `${result.message} ${plan.say}`;
-    }
   } else if (result.ok === false) {
     say =
       result.message ||
@@ -133,20 +171,12 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
         "No me salió. Dame otra pista."
       ]);
   } else if (needsAck(action) && plan.say && plan.say !== ack) {
-    // Confirmación con personalidad
     say = plan.say;
   } else {
-    say = pick([
-      ...DONE_PHRASES,
-      "Ya quedó, bro.",
-      "Hecho, ¿qué sigue?",
-      "Listo, eso ya corre.",
-      "Va, cumplido."
-    ]);
+    say = pick([...DONE_PHRASES, "Ya quedó, bro.", "Hecho, ¿qué sigue?", "Listo, eso ya corre."]);
   }
 
-  // Límite cómodo para voz, pero más largo que antes
-  say = String(say || "").replace(/\s+/g, " ").trim().slice(0, 420);
+  say = String(say || "").replace(/\s+/g, " ").trim().slice(0, 520);
 
   history.push({ role: "assistant", content: ack ? `${ack} ${say}` : say });
   if (history.length > 28) history.splice(0, history.length - 28);
@@ -163,7 +193,7 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
   }
 
   return {
-    ok: Boolean(result.ok !== false),
+    ok: Boolean(result?.ok !== false),
     say,
     ack,
     ackAudioUrl,

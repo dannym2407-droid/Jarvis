@@ -3,6 +3,9 @@ const extra = require("./extra");
 const pro = require("./pro");
 const power = require("./power");
 const flex = require("./flex");
+const git = require("./git");
+const { delegateCodingTask, longInstructionPlan } = require("./delegate");
+const { diagnoseWhyBroken, radarPayload, workspaceBrief } = require("../sense/workspace");
 const { whatsappMessage } = require("./whatsapp");
 
 const APP_ALIASES = [
@@ -222,6 +225,33 @@ async function runAction(action, args = {}) {
       return flex.createNoteOnDesktop(args);
     case "multi":
       return flex.multiRun(args.steps || [], runAction);
+    case "git_status":
+      return git.gitStatus(args.project);
+    case "git_commit":
+      return git.prepareCommit(args.project, args.message);
+    case "git_push":
+      return git.gitPush(args.project, args.branch);
+    case "git_confirm": {
+      const r = await git.handleConfirmSpeech("confirma");
+      return r || { ok: false, message: "No hay nada pendiente de confirmar." };
+    }
+    case "git_cancel":
+      return git.cancelPending();
+    case "diagnose":
+      return diagnoseWhyBroken();
+    case "radar":
+      return radarPayload().then((d) => ({
+        ok: true,
+        message: `Radar: CPU ${d.cpu}% · RAM ${d.ram}% · Disco ${d.disk}% · Proyecto ${d.project}. Cursor ${d.services.cursor ? "ON" : "OFF"}, Node ${d.services.backend ? "ON" : "OFF"}.`,
+        radar: d
+      }));
+    case "workspace":
+      return workspaceBrief().then((b) => ({
+        ok: true,
+        message: `Foco: ${b.foreground.title || b.foreground.processName}. Proyecto: ${b.project?.name || "—"}. RAM ${b.resources.ram}%.`
+      }));
+    case "delegate_code":
+      return delegateCodingTask(args);
     case "none":
     case undefined:
     case null:
@@ -254,12 +284,58 @@ function matchLocalCommand(rawText) {
 
   if (!t) return { action: "none", args: {}, say: "Te escucho, bro. Suéltalo." };
 
+  // Confirmaciones pendientes (commit/push)
+  if (git.getPending()) {
+    if (/^(si|sí|ok|dale|va|confirma|confirmar|hazlo|adelante)$/.test(t) || /\bconfirma\b/.test(t)) {
+      return { action: "git_confirm", args: {}, say: null };
+    }
+    if (/^(no|cancel|cancela|cancelar)$/.test(t) || /\bcancela\b/.test(t)) {
+      return { action: "git_cancel", args: {}, say: "Cancelo." };
+    }
+  }
+
+  const longPlan = longInstructionPlan(rawText);
+  if (longPlan) return longPlan;
+
   if (/^(hola|hey|buenas|que onda|quiubo|quiúbo)$/.test(t)) {
     return {
       action: "none",
       args: {},
       say: "¿Qué onda, bro? Aquí ando. Dime qué hacemos."
     };
+  }
+
+  // Git
+  if (/git status|revisa(r)? (que|qué) cambios|que cambios tengo|qué cambios tengo|estado (de )?git|cambios sin commit/.test(t)) {
+    const proj = t.match(/(?:en|de|del proyecto)\s+([\w\-]+)/);
+    return { action: "git_status", args: { project: proj?.[1] }, say: "Reviso tu git." };
+  }
+  if (/haz(me)? un commit|crea(r)? (un )?commit|commitea|commit (con|de)/.test(t)) {
+    const msg = t.match(/commit(?:\s+con)?\s+["“]?(.+?)["”]?$/);
+    const proj = t.match(/(?:en|de)\s+([\w\-]+)/);
+    return {
+      action: "git_commit",
+      args: { project: proj?.[1], message: msg?.[1] && !/commit/.test(msg[1]) ? msg[1] : "" },
+      say: "Te armo el commit."
+    };
+  }
+  if (/sube (mis )?cambios|push|empuja (a |hacia )?(origin|develop|main|master)?|sube a develop|sube a main/.test(t)) {
+    let branch = "main";
+    if (/develop/.test(t)) branch = "develop";
+    if (/master/.test(t)) branch = "master";
+    if (/\bmain\b/.test(t)) branch = "main";
+    const proj = t.match(/(?:de|del proyecto)\s+([\w\-]+)/);
+    return { action: "git_push", args: { project: proj?.[1], branch }, say: "Preparo el push." };
+  }
+
+  if (/por que no funciona|por qué no funciona|que esta fallando|qué está fallando|diagnostico|diagnóstico|que falla|qué falla/.test(t)) {
+    return { action: "diagnose", args: {}, say: "Analizo tu entorno." };
+  }
+  if (/radar|estado (de )?(la )?pc|system radar|como esta la maquina|cómo está la máquina/.test(t)) {
+    return { action: "radar", args: {}, say: null };
+  }
+  if (/que estoy (usando|haciendo)|qué estoy (usando|haciendo)|que tengo abierto|qué tengo abierto|entorno|workspace/.test(t)) {
+    return { action: "workspace", args: {}, say: null };
   }
 
   if (/briefing|reporte|como esta todo|cómo está todo|status general/.test(t)) {

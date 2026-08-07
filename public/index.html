@@ -3,22 +3,58 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jarvis</title>
+  <title>JARVIS SYSTEM</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div class="bg" aria-hidden="true"></div>
-  <main class="stage">
-    <p class="brand">JARVIS</p>
-    <button id="orbBtn" class="orb idle" type="button" aria-label="Grabar orden por voz"></button>
-    <p id="stateLine" class="state">Iniciando...</p>
-    <p id="heardLine" class="heard" hidden></p>
-    <p class="hint">Habla y ejecuta · toca el orbe para pausar · o escribe abajo</p>
-    <form id="textForm" class="text-form" autocomplete="off">
-      <input id="textInput" type="text" placeholder="O escribe aquí: abre Chrome..." maxlength="500" />
-      <button type="submit">Enviar</button>
-    </form>
-  </main>
+  <div class="hud">
+    <aside class="radar panel" id="radarPanel">
+      <header class="panel-h">JARVIS SYSTEM</header>
+      <div class="meter"><span>CPU</span><div class="bar"><i id="cpuBar"></i></div><b id="cpuVal">—</b></div>
+      <div class="meter"><span>RAM</span><div class="bar"><i id="ramBar"></i></div><b id="ramVal">—</b></div>
+      <div class="meter"><span>SSD</span><div class="bar"><i id="diskBar"></i></div><b id="diskVal">—</b></div>
+      <div class="project-box">
+        <p class="label">ACTIVE PROJECT</p>
+        <p id="projectName" class="project">—</p>
+        <ul class="services" id="services">
+          <li><i data-k="cursor"></i> Cursor</li>
+          <li><i data-k="vscode"></i> VS Code</li>
+          <li><i data-k="backend"></i> Node</li>
+          <li><i data-k="frontend"></i> Browser</li>
+          <li><i data-k="docker"></i> Docker</li>
+          <li><i data-k="database"></i> DB</li>
+        </ul>
+      </div>
+      <p id="fgLine" class="fg">Foco: —</p>
+      <p id="gitLine" class="git">Git: —</p>
+    </aside>
+
+    <main class="stage">
+      <p class="brand">JARVIS</p>
+      <button id="orbBtn" class="orb idle" type="button" aria-label="Pausar o reanudar micrófono"></button>
+      <p id="stateLine" class="state">Iniciando...</p>
+      <p id="heardLine" class="heard" hidden></p>
+      <p id="suggestLine" class="suggest" hidden></p>
+      <p class="hint">Di <strong>Hey Jarvis</strong> + orden · el orbe solo pausa</p>
+      <form id="textForm" class="text-form" autocomplete="off">
+        <input id="textInput" type="text" placeholder="git status · por qué no funciona · abre Cursor..." maxlength="700" />
+        <button type="submit">Enviar</button>
+      </form>
+    </main>
+
+    <aside class="tips panel">
+      <header class="panel-h">VOICE OPS</header>
+      <ul>
+        <li>Hey Jarvis, revisa qué cambios tengo</li>
+        <li>Hazme un commit</li>
+        <li>Sube mis cambios a develop</li>
+        <li>¿Por qué no funciona?</li>
+        <li>Radar</li>
+        <li>Abre Cursor y trabaja en mi portafolio, avísame</li>
+      </ul>
+    </aside>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>
