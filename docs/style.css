@@ -150,15 +150,18 @@ dialog {
 .sheet { padding: 18px; display: grid; gap: 12px; }
 .sheet h2 { margin: 0; font-size: 1.1rem; }
 .sheet label { display: grid; gap: 6px; font-size: 0.9rem; color: var(--muted); }
-.sheet input {
-  height: 42px;
+.sheet input,
+.sheet textarea {
   border-radius: 10px;
   border: 1px solid var(--line);
   background: #102536;
   color: var(--text);
-  padding: 0 10px;
+  padding: 10px;
   font-size: 16px;
+  font-family: inherit;
 }
+.sheet input { height: 42px; padding: 0 10px; }
+.sheet textarea { resize: vertical; min-height: 88px; }
 .hint { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
 .hint a { color: var(--cyan); }
 menu {

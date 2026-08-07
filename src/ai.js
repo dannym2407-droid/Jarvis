@@ -27,6 +27,12 @@ Acciones:
 - coin_flip|dice|password|create_folder|notepad_text
 - settings_page|shutdown|email|news|define|run_cmd
 - tell_time|tell_date|none
+- disk_space|clear_temp|restart_explorer|speedtest|ip_info
+- brightness:{level} | night_light:{on} | focus_assist:{mode}
+- find_file:{query} | open_found:{query} | large_downloads:{}
+- exchange:{amount,from,to} | stock:{symbol} | translate:{text,to}
+- wiki_summary:{query} | routine:{name:estudio|trabajo|gaming|noche}
+- sticky_notes|bluetooth|wifi_settings|qr:{text}|password_copy|countdown:{date,label}
 
 Reglas:
 - close_apps SOLO con "todas" o "todo lo abierto"

@@ -29,12 +29,13 @@
     </div>
 
     <div class="chips">
-      <button type="button" data-cmd="qué hora es">Hora</button>
-      <button type="button" data-cmd="motívame">Motivación</button>
-      <button type="button" data-cmd="busca clima Guatemala">Clima</button>
+      <button type="button" data-cmd="briefing">Briefing</button>
+      <button type="button" data-cmd="clima en Guatemala">Clima</button>
+      <button type="button" data-cmd="mis pendientes">Pendientes</button>
+      <button type="button" data-cmd="precio bitcoin">Crypto</button>
       <button type="button" data-cmd="abre WhatsApp">WhatsApp</button>
-      <button type="button" data-cmd="abre mapas">Mapas</button>
-      <button type="button" data-cmd="cuéntame un chiste">Chiste</button>
+      <button type="button" data-cmd="dónde estoy">Ubicación</button>
+      <button type="button" data-cmd="ayuda">Ayuda</button>
     </div>
 
     <form id="form" class="composer">
@@ -55,10 +56,14 @@
         Groq API Key (gratis)
         <input id="apiKey" type="password" placeholder="gsk_..." autocomplete="off" />
       </label>
+      <label>
+        Contactos (nombre: teléfono)
+        <textarea id="contacts" rows="4" placeholder="mamá: 50212345678&#10;bro: 50287654321"></textarea>
+      </label>
       <p class="hint">
         Key gratis en
         <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">console.groq.com/keys</a>.
-        Queda guardada solo en este teléfono.
+        Queda guardada solo en este teléfono. Con contactos puedes decir: llama a mamá / WhatsApp a bro: llegué.
       </p>
       <p class="hint">
         Tip: en Chrome/Safari → “Agregar a pantalla de inicio” para usarlo como app.

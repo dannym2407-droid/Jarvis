@@ -1,6 +1,7 @@
 const actions = require("./system");
 const extra = require("./extra");
 const pro = require("./pro");
+const power = require("./power");
 const { whatsappMessage } = require("./whatsapp");
 
 const APP_ALIASES = [
@@ -156,6 +157,50 @@ async function runAction(action, args = {}) {
       return pro.rememberFact(args.text);
     case "recall":
       return pro.recallMemory();
+    case "disk_space":
+      return power.diskSpace();
+    case "find_file":
+      return power.findFiles({ query: args.query, root: args.root });
+    case "open_found":
+      return power.openFoundFile({ query: args.query });
+    case "brightness":
+      return power.setBrightness(args.level);
+    case "night_light":
+      return power.nightLight(args.on !== false);
+    case "focus_assist":
+      return power.focusAssist(args.mode);
+    case "clear_temp":
+      return power.clearTemp();
+    case "restart_explorer":
+      return power.restartExplorer();
+    case "speedtest":
+      return power.openSpeedtest();
+    case "exchange":
+      return power.exchangeRate(args);
+    case "stock":
+      return power.stockPrice(args.symbol);
+    case "translate":
+      return power.translateQuick(args);
+    case "wiki_summary":
+      return power.wikipediaSummary(args.query);
+    case "ip_info":
+      return power.ipInfo();
+    case "routine":
+      return power.launchRoutine(args.name);
+    case "sticky_notes":
+      return power.openStickyNotes();
+    case "large_downloads":
+      return power.listLargeDownloads();
+    case "bluetooth":
+      return power.bluetoothSettings();
+    case "wifi_settings":
+      return power.wifiSettings();
+    case "countdown":
+      return power.countdownTo(args);
+    case "qr":
+      return power.generateQrText(args.text);
+    case "password_copy":
+      return power.copyPassword(args.length);
     case "none":
     case undefined:
     case null:
@@ -194,6 +239,105 @@ function matchLocalCommand(rawText) {
 
   if (/briefing|reporte|como esta todo|cómo está todo|status general/.test(t)) {
     return { action: "briefing", args: {}, say: "Te armo el briefing." };
+  }
+
+  if (/espacio (en )?(disco|disco duro)|cuanto (disco|espacio)|cuánto (disco|espacio)|disco libre/.test(t)) {
+    return { action: "disk_space", args: {}, say: null };
+  }
+  if (/limpia(r)? (archivos )?temp|limpia(r)? temporales|borra(r)? temporales/.test(t)) {
+    return { action: "clear_temp", args: {}, say: "Limpio temporales." };
+  }
+  if (/reinicia(r)? (el )?explorador|restart explorer/.test(t)) {
+    return { action: "restart_explorer", args: {}, say: "Reinicio el Explorador." };
+  }
+  if (/speed ?test|prueba (de )?velocidad|que tan rapido|qué tan rápido (esta|está) (el )?internet/.test(t)) {
+    return { action: "speedtest", args: {}, say: "Abro el speed test." };
+  }
+  if (/mi ip|ip publica|ip pública/.test(t)) {
+    return { action: "ip_info", args: {}, say: null };
+  }
+  if (/luz nocturna|night light/.test(t)) {
+    return { action: "night_light", args: { on: !/apaga|quita|desactiva/.test(t) }, say: null };
+  }
+  if (/no molestar|focus assist|modo concentracion|modo concentración|dnd/.test(t)) {
+    return { action: "focus_assist", args: { mode: /apaga|quita|desactiva|off/.test(t) ? "off" : "priority" }, say: null };
+  }
+  if (/abre (bluetooth|bluetooh)|configura(r)? bluetooth/.test(t)) {
+    return { action: "bluetooth", args: {}, say: "Abro Bluetooth." };
+  }
+  if (/abre (config (de )?wifi|ajustes (de )?wifi)|configura(r)? (el )?wifi/.test(t)) {
+    return { action: "wifi_settings", args: {}, say: "Abro WiFi." };
+  }
+  if (/sticky notes|notas adhesivas|notitas/.test(t)) {
+    return { action: "sticky_notes", args: {}, say: "Abro Sticky Notes." };
+  }
+  if (/archivos pesados|descargas pesadas|que pesa|qué pesa (en )?descargas/.test(t)) {
+    return { action: "large_downloads", args: {}, say: null };
+  }
+  if (/contraseña (segura )?y copia|genera(r)? (y )?copia (una )?contraseña|password copy/.test(t)) {
+    return { action: "password_copy", args: { length: 20 }, say: null };
+  }
+
+  const bright = t.match(/(?:brillo|brightness)\s*(?:a|al|de)?\s*(\d{1,3})/);
+  if (bright) {
+    return { action: "brightness", args: { level: Number(bright[1]) }, say: null };
+  }
+  if (/sube (el )?brillo/.test(t)) return { action: "brightness", args: { level: 90 }, say: "Subo brillo." };
+  if (/baja (el )?brillo/.test(t)) return { action: "brightness", args: { level: 30 }, say: "Bajo brillo." };
+
+  const findF = t.match(/(?:busca(?:r)?|encuentra|localiza)\s+(?:el\s+)?(?:archivo|file)\s+(.+)$/);
+  if (findF) {
+    return { action: "find_file", args: { query: findF[1].trim() }, say: `Busco ${findF[1].trim()}.` };
+  }
+  const openF = t.match(/(?:abre|abrir)\s+(?:el\s+)?archivo\s+(.+)$/);
+  if (openF) {
+    return { action: "open_found", args: { query: openF[1].trim() }, say: `Busco y abro ${openF[1].trim()}.` };
+  }
+
+  const fx = t.match(
+    /(?:cuanto(?:s)? (?:es|son)|cuánto(?:s)? (?:es|son)|convierte|cambia)\s+(\d+(?:[.,]\d+)?)\s*(dolares|dólares|usd|quetzales|gtq|euros|eur)\s*(?:a|en|por)?\s*(dolares|dólares|usd|quetzales|gtq|euros|eur)?/
+  );
+  if (fx) {
+    const map = { dolares: "USD", dólares: "USD", usd: "USD", quetzales: "GTQ", gtq: "GTQ", euros: "EUR", eur: "EUR" };
+    const from = map[fx[2]] || "USD";
+    const to = map[fx[3]] || (from === "USD" ? "GTQ" : "USD");
+    return {
+      action: "exchange",
+      args: { amount: Number(String(fx[1]).replace(",", ".")), from, to },
+      say: null
+    };
+  }
+
+  const stock = t.match(/(?:precio|cotiza(?:cion|ción)?)\s+(?:de\s+)?(aapl|tsla|msft|googl|amzn|nvda|meta|[A-Z]{1,5})\b/);
+  if (stock) return { action: "stock", args: { symbol: stock[1] }, say: null };
+
+  const tr = t.match(/(?:traduce(?:r)?(?:\s+al\s+(ingles|inglés|español|espanol))?\s+)(.+)$/);
+  if (tr && !/portapapeles/.test(t)) {
+    const to = /espanol|español/.test(tr[1] || "") ? "es" : "en";
+    return { action: "translate", args: { text: tr[2].trim(), to }, say: null };
+  }
+
+  const wikiSum = t.match(/(?:resumen(?:\s+de)?|que es|qué es|quien es|quién es)\s+(.+)$/);
+  if (wikiSum && wikiSum[1].length < 80 && !/hora|fecha|clima/.test(t)) {
+    return { action: "wiki_summary", args: { query: wikiSum[1].trim() }, say: null };
+  }
+
+  const routine = t.match(/rutina\s+(estudio|tarea|trabajo|oficina|gaming|juego|noche)/);
+  if (routine) {
+    return { action: "routine", args: { name: routine[1] }, say: `Lanzo rutina ${routine[1]}.` };
+  }
+
+  const qr = t.match(/(?:genera(?:r)?|crea(?:r)?)\s+(?:un\s+)?qr\s+(?:de\s+|con\s+)?(.+)$/);
+  if (qr) return { action: "qr", args: { text: qr[1].trim() }, say: "Genero el QR." };
+
+  const cd = t.match(/(?:faltan|countdown|cuenta regresiva)\s+(?:para\s+)?(.+?)\s+(?:el\s+)?(\d{4}-\d{2}-\d{2})/);
+  if (cd) {
+    return { action: "countdown", args: { label: cd[1].trim(), date: cd[2] }, say: null };
+  }
+
+  const volExact = t.match(/volumen\s*(?:a|al|de)?\s*(\d{1,3})/);
+  if (volExact) {
+    return { action: "volume", args: { level: Number(volExact[1]) }, say: `Volumen a ${volExact[1]}.` };
   }
 
   const mode =
