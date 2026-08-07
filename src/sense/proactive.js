@@ -1,7 +1,9 @@
-const { radarPayload, topMemoryApps } = require("./workspace");
+const { radarPayload } = require("./workspace");
 const { gitStatus, pickRepo } = require("../actions/git");
 const { loadProjectsFile } = require("../memory/store");
 const { synthesizeToFile } = require("../voice/tts");
+const { setOffer } = require("../core/confirm");
+const { healthcheckProject, listProjectProfiles } = require("../actions/projects");
 const path = require("node:path");
 
 const listeners = new Set();
@@ -37,16 +39,27 @@ async function prepareAudio(text) {
   }
 }
 
-async function maybeAlert(key, text, { cooldownMs = 10 * 60 * 1000, speak = true } = {}) {
+async function maybeAlert(key, text, { cooldownMs = 10 * 60 * 1000, speak = true, steps = null } = {}) {
   if (state.lastAlertKey === key && Date.now() - state.lastAlertAt < cooldownMs) return;
   state.lastAlertKey = key;
   state.lastAlertAt = Date.now();
+
+  if (steps?.length) {
+    setOffer({
+      type: key,
+      text,
+      steps,
+      ttlMs: Math.max(cooldownMs, 3 * 60 * 1000)
+    });
+  }
+
   const audioUrl = speak ? await prepareAudio(text) : null;
   emit({
     type: "proactive",
     key,
     text,
     audioUrl,
+    hasAction: Boolean(steps?.length),
     at: new Date().toISOString()
   });
 }
@@ -57,23 +70,32 @@ async function tick() {
     emit({ type: "radar", data: radar, at: radar.at });
 
     if (radar.ram >= 90) {
-      const top = (radar.topApps || [])
-        .slice(0, 3)
-        .map((a) => `${a.name} ${a.mb}MB`)
-        .join(", ");
+      const top = (radar.topApps || []).slice(0, 3);
+      const chromeHeavy = top.find((a) => /chrome|msedge/i.test(a.name));
+      const steps = chromeHeavy
+        ? [{ action: "kill_process", args: { name: "chrome" } }]
+        : top[0]
+          ? [{ action: "kill_process", args: { name: top[0].name } }]
+          : [{ action: "kill_process", args: { name: "chrome" } }];
+
       await maybeAlert(
         "ram-high",
-        `Tu memoria está al ${radar.ram}%. ${top ? `Más pesados: ${top}.` : ""} ¿Quieres que cierre Chrome o apps pesadas?`
+        `Tu memoria está al ${radar.ram}%. ${
+          chromeHeavy ? `Chrome pesa ~${chromeHeavy.mb}MB.` : ""
+        } ¿Quieres que lo cierre? Di sí.`,
+        { steps }
       );
     } else if (radar.ram >= 85) {
       await maybeAlert(
         "ram-warn",
-        `RAM al ${radar.ram}%. Si se pone lenta, dime cierra Chrome.`,
-        { cooldownMs: 20 * 60 * 1000 }
+        `RAM al ${radar.ram}%. Si se pone lenta, dime cierra Chrome o di sí si te ofrezco cerrarlo.`,
+        {
+          cooldownMs: 20 * 60 * 1000,
+          steps: [{ action: "kill_process", args: { name: "chrome" } }]
+        }
       );
     }
 
-    // Git sucio en proyectos conocidos
     const projects = loadProjectsFile();
     for (const [name, val] of Object.entries(projects)) {
       const p = typeof val === "string" ? val : val?.path;
@@ -82,13 +104,35 @@ async function tick() {
       if (st.ok && st.dirty && st.rawCount >= 3) {
         await maybeAlert(
           `git-dirty-${name}`,
-          `Detecté ${st.rawCount} cambios sin commit en ${name}. ¿Quieres que revise el git status?`,
-          { cooldownMs: 45 * 60 * 1000 }
+          `Detecté ${st.rawCount} cambios sin commit en ${name}. ¿Reviso el git status? Di sí.`,
+          {
+            cooldownMs: 45 * 60 * 1000,
+            steps: [{ action: "git_status", args: { project: name } }]
+          }
         );
       }
     }
 
-    // Watch long tasks
+    // Healthcheck ligero de perfiles
+    for (const profile of listProjectProfiles().slice(0, 4)) {
+      if (!profile.ports?.length && !profile.health?.length) continue;
+      const hc = await healthcheckProject(profile.name);
+      const closed = (hc.portResults || []).filter((x) => !x.open);
+      const open = (hc.portResults || []).filter((x) => x.open);
+      if (open.length && closed.length && closed.length >= Math.ceil((hc.portResults || []).length / 2)) {
+        await maybeAlert(
+          `health-${profile.name}`,
+          `${profile.name}: puertos ON ${open.map((x) => x.port).join(",")} · OFF ${closed
+            .map((x) => x.port)
+            .join(",")}. ¿Corro healthcheck completo? Di sí.`,
+          {
+            cooldownMs: 30 * 60 * 1000,
+            steps: [{ action: "project_health", args: { project: profile.name } }]
+          }
+        );
+      }
+    }
+
     for (const task of [...state.watchingTasks]) {
       await checkWatchTask(task);
     }
@@ -113,8 +157,11 @@ async function checkWatchTask(task) {
         state.watchingTasks = state.watchingTasks.filter((t) => t.id !== task.id);
         await maybeAlert(
           `task-done-${task.id}`,
-          task.doneMessage || `Creo que terminó el trabajo en ${task.label}. ¿Reviso los cambios?`,
-          { cooldownMs: 1000 }
+          task.doneMessage || `Parece que terminó el trabajo en ${task.label}. ¿Reviso git? Di sí.`,
+          {
+            cooldownMs: 1000,
+            steps: [{ action: "git_status", args: { project: task.label } }]
+          }
         );
       }
       if (dirtyCount > (task.baselineDirty || 0)) task.sawActivity = true;
@@ -124,8 +171,11 @@ async function checkWatchTask(task) {
       state.watchingTasks = state.watchingTasks.filter((t) => t.id !== task.id);
       await maybeAlert(
         `task-timeout-${task.id}`,
-        `Pasó el tiempo de vigilancia de ${task.label}. ¿Sigo esperando o revisamos?`,
-        { cooldownMs: 1000 }
+        `Pasó el tiempo de vigilancia de ${task.label}. ¿Revisamos cambios? Di sí.`,
+        {
+          cooldownMs: 1000,
+          steps: [{ action: "git_status", args: { project: task.label } }]
+        }
       );
     }
   } catch {

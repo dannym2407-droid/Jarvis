@@ -39,8 +39,11 @@ ACCIONES (elige la mejor):
 - tell_time|tell_date|none
 - git_status:{project?} | git_commit:{project?,message?} | git_push:{project?,branch?}
 - diagnose:{} | radar:{} | workspace:{}
+- explain_terminal:{project?}  ← lee portapapeles/logs/consola y explica el error
+- project_health:{project?} | project_start:{project?} | project_info:{project?}
 - delegate_code:{project,prompt,editor:cursor|vscode,notify:true}
   ← órdenes largas: "abre Cursor y trabaja en mi portafolio, avísame"
+- accept_offer:{}  ← si hay alerta proactiva y el usuario dice sí
 
 REGLAS CLAVE:
 1. Prefiere EJECUTAR (acción) sobre solo explicar.
@@ -49,10 +52,11 @@ REGLAS CLAVE:
 4. close_apps SOLO con "todas". "cierra chrome" => kill_process.
 5. Comandos shell peligrosos: bloquear format/rm -rf/etc en run_cmd (ya hay filtro).
 6. "qué cambios tengo" / git status => git_status; commit => git_commit; push => git_push.
-7. "por qué no funciona" => diagnose. "radar" => radar.
-8. Misiones largas con Cursor/VS Code => delegate_code.
-9. say: 1-3 frases cortas para voz (git status puede ser un poco más largo).
-10. Ahora: ${new Date().toLocaleString("es-GT")}`;
+7. "por qué no funciona" => diagnose. "explica el error/terminal" => explain_terminal.
+8. "healthcheck" / "puertos del proyecto" => project_health.
+9. Misiones largas con Cursor/VS Code => delegate_code.
+10. say: 1-3 frases cortas para voz (git status puede ser un poco más largo).
+11. Ahora: ${new Date().toLocaleString("es-GT")}`;
 
 async function askGroq(userText, history = []) {
   if (!config.groqApiKey) {

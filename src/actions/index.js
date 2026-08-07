@@ -6,6 +6,9 @@ const flex = require("./flex");
 const git = require("./git");
 const { delegateCodingTask, longInstructionPlan } = require("./delegate");
 const { diagnoseWhyBroken, radarPayload, workspaceBrief } = require("../sense/workspace");
+const { explainTerminal } = require("./terminal");
+const { healthcheckProject, startProjectStack, getProjectProfile } = require("./projects");
+const { getOffer, clearOffer } = require("../core/confirm");
 const { whatsappMessage } = require("./whatsapp");
 
 const APP_ALIASES = [
@@ -252,6 +255,26 @@ async function runAction(action, args = {}) {
       }));
     case "delegate_code":
       return delegateCodingTask(args);
+    case "explain_terminal":
+      return explainTerminal({ project: args.project });
+    case "project_health":
+      return healthcheckProject(args.project);
+    case "project_start":
+      return startProjectStack(args.project);
+    case "project_info": {
+      const p = getProjectProfile(args.project);
+      if (!p) return { ok: false, message: "No encontré ese proyecto." };
+      return {
+        ok: true,
+        message: `${p.name}: ${p.path}. Puertos: ${(p.ports || []).join(", ") || "—"}. Branch: ${p.branch || "—"}.`
+      };
+    }
+    case "accept_offer": {
+      const offer = getOffer();
+      if (!offer) return { ok: false, message: "No hay oferta pendiente." };
+      clearOffer();
+      return flex.multiRun(offer.steps || [], runAction);
+    }
     case "none":
     case undefined:
     case null:
@@ -330,6 +353,22 @@ function matchLocalCommand(rawText) {
 
   if (/por que no funciona|por qué no funciona|que esta fallando|qué está fallando|diagnostico|diagnóstico|que falla|qué falla/.test(t)) {
     return { action: "diagnose", args: {}, say: "Analizo tu entorno." };
+  }
+  if (/explica(r)? (el )?(error|terminal|log|consola)|que dice (la )?terminal|qué dice (la )?terminal|lee (la )?terminal|analiza (el )?error/.test(t)) {
+    const proj = t.match(/(?:de|del proyecto|en)\s+([\w\-]+)/);
+    return { action: "explain_terminal", args: { project: proj?.[1] }, say: "Reviso el error." };
+  }
+  if (/health ?check|salud (del )?proyecto|puertos (del )?proyecto|esta levantado|está levantado/.test(t)) {
+    const proj = t.match(/(?:de|del proyecto|en)\s+([\w\-]+)/);
+    return { action: "project_health", args: { project: proj?.[1] }, say: "Chequeo puertos." };
+  }
+  if (/levanta(r)? (el )?proyecto|arranca(r)? (el )?stack|start(ea)? (el )?proyecto/.test(t)) {
+    const proj = t.match(/(?:proyecto|stack)\s+([\w\-]+)/) || t.match(/(?:levanta|arranca)\s+([\w\-]+)/);
+    return { action: "project_start", args: { project: proj?.[1] }, say: "Levanto el proyecto." };
+  }
+  if (/perfil (del )?proyecto|info (del )?proyecto|donde esta el proyecto|dónde está el proyecto/.test(t)) {
+    const proj = t.match(/proyecto\s+([\w\-]+)/);
+    return { action: "project_info", args: { project: proj?.[1] }, say: null };
   }
   if (/radar|estado (de )?(la )?pc|system radar|como esta la maquina|cómo está la máquina/.test(t)) {
     return { action: "radar", args: {}, say: null };

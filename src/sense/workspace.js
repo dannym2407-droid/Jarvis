@@ -176,7 +176,29 @@ async function diagnoseWhyBroken() {
     clues.push(`RAM alta ${brief.resources.ram}%. Top: ${brief.topApps.map((a) => `${a.name} ${a.mb}MB`).join(", ")}`);
   }
 
-  // Heurística puertos: leer package.json scripts si hay proyecto
+  try {
+    const { healthcheckProject } = require("../actions/projects");
+    const hc = await healthcheckProject(brief.project?.name || "jarvis");
+    if (hc?.ok) clues.push(hc.message);
+  } catch {
+    // ignore
+  }
+
+  try {
+    const { collectTerminalContext, looksLikeError } = require("../actions/terminal");
+    const { sources } = await collectTerminalContext(brief.project?.name);
+    const err = sources.find((x) => looksLikeError(x.text));
+    if (err) {
+      const line = err.text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find((l) => looksLikeError(l));
+      if (line) clues.push(`Error visto (${err.from}): ${line.slice(0, 160)}`);
+    }
+  } catch {
+    // ignore
+  }
+
   let portHint = "";
   try {
     const pkgPath = brief.project?.path ? path.join(brief.project.path, "package.json") : "";
@@ -191,7 +213,6 @@ async function diagnoseWhyBroken() {
   }
   if (portHint) clues.push(portHint);
 
-  // Listen ports
   try {
     const portsOut = await runShell(`
 Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |

@@ -10,6 +10,7 @@ const {
 const { config } = require("../config");
 const { handleConfirmSpeech, getPending } = require("../actions/git");
 const { memoryContextForAi } = require("../memory/store");
+const { getOffer, clearOffer, isAffirmative, isNegative } = require("./confirm");
 const path = require("node:path");
 
 const history = [];
@@ -58,7 +59,10 @@ const INFO_ACTIONS = new Set([
   "git_cancel",
   "diagnose",
   "radar",
-  "workspace"
+  "workspace",
+  "explain_terminal",
+  "project_health",
+  "accept_offer"
 ]);
 
 function needsAck(action) {
@@ -94,9 +98,10 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
   const raw = String(text || "").trim();
   const input = stripWakeWord(raw);
   if (!input) {
-    const say = getPending()
-      ? "Sigo esperando tu confirma o cancela."
-      : "Hey, te escucho. Dime la orden.";
+    const say =
+      getPending() || getOffer()
+        ? "Sigo esperando tu sí o cancela."
+        : "Hey, te escucho. Dime la orden.";
     const audioUrl = browserAudio ? await prepareAudio(say) : null;
     if (speakReply && !browserAudio) await speak(say).catch(() => {});
     return { ok: true, say, audioUrl, result: null, action: "none" };
@@ -104,6 +109,7 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
 
   history.push({ role: "user", content: input });
 
+  // 1) Git confirm pendiente
   if (getPending()) {
     const confirmed = await handleConfirmSpeech(input);
     if (confirmed) {
@@ -117,6 +123,34 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
         audioUrl,
         action: "git_confirm",
         result: confirmed
+      };
+    }
+  }
+
+  // 2) Oferta proactiva (sí = ejecutar pasos)
+  const offer = getOffer();
+  if (offer) {
+    if (isNegative(input)) {
+      clearOffer();
+      const say = "Va, lo dejo. No hago nada.";
+      history.push({ role: "assistant", content: say });
+      const audioUrl = browserAudio ? await prepareAudio(say) : null;
+      if (speakReply && !browserAudio) await speak(say).catch(() => {});
+      return { ok: true, say, audioUrl, action: "accept_offer", result: { ok: true } };
+    }
+    if (isAffirmative(input)) {
+      clearOffer();
+      const result = await runAction("multi", { steps: offer.steps || [] });
+      const say = result.message || "Hecho, ejecuté lo que te ofrecí.";
+      history.push({ role: "assistant", content: say });
+      const audioUrl = browserAudio ? await prepareAudio(say) : null;
+      if (speakReply && !browserAudio) await speak(say).catch(() => {});
+      return {
+        ok: result.ok !== false,
+        say,
+        audioUrl,
+        action: "accept_offer",
+        result
       };
     }
   }
