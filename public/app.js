@@ -168,7 +168,15 @@ async function runVoiceCommand(text) {
     }
 
     setState(result.say || "Listo.");
-    if (result.audioUrl) await playAudioUrl(result.audioUrl);
+    if (result.audioUrl) {
+      await playAudioUrl(result.audioUrl);
+    } else if (result.say && window.speechSynthesis) {
+      // Fallback rápido si el TTS del server tarda
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(result.say);
+      u.lang = "es-MX";
+      window.speechSynthesis.speak(u);
+    }
   } catch {
     const msg = "Se me trabó, bro. Prueba otra vez.";
     setState(msg);

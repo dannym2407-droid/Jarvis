@@ -35,7 +35,8 @@ const config = {
   voiceLang: process.env.VOICE_LANG || "es-MX",
   voiceMale: process.env.VOICE_MALE || "es-MX-JorgeNeural",
   groqApiKey: process.env.GROQ_API_KEY || "",
-  groqModel: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+  groqModel: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+  groqModelFast: process.env.GROQ_MODEL_FAST || "llama-3.1-8b-instant",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   assistantName: "Jarvis"
 };

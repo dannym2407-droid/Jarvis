@@ -96,7 +96,7 @@ $w.SendKeys('^l')
   };
 }
 
-async function longInstructionPlan(text) {
+function longInstructionPlan(text) {
   // Heurística local para órdenes largas comunes
   const t = String(text || "")
     .toLowerCase()
@@ -117,7 +117,6 @@ async function longInstructionPlan(text) {
   if (cursorWork) {
     const editor = /vscode|visual|vs code/.test(cursorWork[1] || t) ? "vscode" : "cursor";
     const rest = (cursorWork[2] || cursorWork[1] || "").trim();
-    // "mi portafolio" / "portfolio" / "ecokinal"
     const projectMatch = rest.match(
       /(portafolio|portfolio|ecokinal|jarvis|aditus|kinal|[\w\-]+)/
     );

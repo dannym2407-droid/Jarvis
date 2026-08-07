@@ -64,6 +64,15 @@ function run(command, args, timeoutMs = 60000) {
 /**
  * Genera (o reutiliza) MP3 masculino. El navegador lo reproduce.
  */
+function getCachedAudioFile(text) {
+  const safe = sanitize(text);
+  if (!safe) return null;
+  const voice = config.voiceMale || "es-MX-JorgeNeural";
+  const out = cacheFileFor(safe, voice);
+  if (fs.existsSync(out) && fs.statSync(out).size > 100) return out;
+  return null;
+}
+
 async function synthesizeToFile(text) {
   const safe = sanitize(text);
   if (!safe) return null;
@@ -74,6 +83,11 @@ async function synthesizeToFile(text) {
   // speak.py --warm solo genera; también podemos usar edge_tts CLI
   await run("python", ["-m", "edge_tts", "--voice", voice, "--text", safe, "--write-media", out]);
   return out;
+}
+
+/** Genera en background para la próxima vez (no bloquea la respuesta). */
+function warmAudioAsync(text) {
+  synthesizeToFile(text).catch(() => {});
 }
 
 async function speakSapi(text, { rate = 2 } = {}) {
@@ -160,6 +174,8 @@ module.exports = {
   speak,
   speakAsync,
   synthesizeToFile,
+  getCachedAudioFile,
+  warmAudioAsync,
   cacheFileFor,
   sanitize,
   warmVoiceCache,

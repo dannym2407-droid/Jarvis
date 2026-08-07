@@ -303,7 +303,10 @@ function matchLocalCommand(rawText) {
   const t = cleaned
     .toLowerCase()
     .normalize("NFD")
-    .replace(/\p{M}/gu, "");
+    .replace(/\p{M}/gu, "")
+    .replace(/[¿?¡!.,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   if (!t) return { action: "none", args: {}, say: "Te escucho, bro. Suéltalo." };
 
@@ -318,7 +321,7 @@ function matchLocalCommand(rawText) {
   }
 
   const longPlan = longInstructionPlan(rawText);
-  if (longPlan) return longPlan;
+  if (longPlan && longPlan.action) return longPlan;
 
   if (/^(hola|hey|buenas|que onda|quiubo|quiúbo)$/.test(t)) {
     return {
@@ -852,6 +855,19 @@ function matchLocalCommand(rawText) {
     if (/^https?:\/\//.test(target)) {
       return { action: "open_url", args: { url: target }, say: "Abro el link." };
     }
+  }
+
+  // Cerrar ChatGPT / ventanas mal reconocidas por el mic
+  if (/cierra|cerrar/.test(t) && /chat\s*gpt|chatgpt|echar gpt|gpt/.test(t)) {
+    return { action: "kill_process", args: { name: "chrome" }, say: "Cierro Chrome (ChatGPT)." };
+  }
+
+  if (/que puedes hacer|qué puedes hacer|que funciones|qué funciones|ayuda|comandos/.test(t)) {
+    return {
+      action: "none",
+      args: {},
+      say: "Puedo abrir apps, WhatsApp, buscar, git status y commit, clima, volumen, diagnosticar errores, healthcheck y más. Di por ejemplo: abre WhatsApp."
+    };
   }
 
   // Conversación libre → la IA

@@ -1,8 +1,9 @@
 const { askGroq } = require("../ai");
-const { runAction, matchLocalCommand, stripWakeWord } = require("../actions");
+const { runAction, matchLocalCommand, stripWakeWord, resolveAppName } = require("../actions");
 const {
   speak,
-  synthesizeToFile,
+  getCachedAudioFile,
+  warmAudioAsync,
   ACK_PHRASES,
   DONE_PHRASES,
   FAIL_PHRASES
@@ -78,9 +79,11 @@ function needsAck(action) {
 async function prepareAudio(text) {
   if (!text) return null;
   try {
-    const file = await synthesizeToFile(text);
-    if (!file) return null;
-    return `/api/audio/${path.basename(file)}`;
+    const cached = getCachedAudioFile(text);
+    if (cached) return `/api/audio/${path.basename(cached)}`;
+    // No bloquea: prepara para la próxima vez
+    warmAudioAsync(text);
+    return null;
   } catch (error) {
     console.warn("[tts-prep]", error.message);
     return null;
@@ -94,7 +97,42 @@ function enrichWhoami(plan) {
   return plan;
 }
 
+/** Si la IA no eligió acción pero el texto es una orden clara. */
+function heuristicIntent(text) {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[¿?¡!.,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const open = t.match(/^(?:abre|abrir|open)\s+(?:el |la |los |las )?(.+)$/);
+  if (open) {
+    const name = open[1].trim();
+    const app = resolveAppName(name);
+    if (app) return { action: "open_app", args: { name: app }, say: `Abro ${app}.` };
+    return { action: "launch_any", args: { name }, say: `Abro ${name}.` };
+  }
+
+  const kill = t.match(/^(?:cierra|cerrar|mata|kill)\s+(?:el |la |los |las )?(.+)$/);
+  if (kill && !/todas|todo/.test(kill[1])) {
+    return { action: "kill_process", args: { name: kill[1].trim() }, say: `Cierro ${kill[1].trim()}.` };
+  }
+
+  const search = t.match(/^(?:busca|buscar|googlea|google)\s+(.+)$/);
+  if (search) {
+    return { action: "search_web", args: { query: search[1].trim(), type: "web" }, say: `Busco ${search[1].trim()}.` };
+  }
+
+  if (/que hora|hora es/.test(t)) return { action: "tell_time", args: {}, say: null };
+  if (/que dia|que fecha/.test(t)) return { action: "tell_date", args: {}, say: null };
+
+  return null;
+}
+
 async function handleInstruction(text, { speakReply = true, browserAudio = false } = {}) {
+  const started = Date.now();
   const raw = String(text || "").trim();
   const input = stripWakeWord(raw);
   if (!input) {
@@ -109,7 +147,6 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
 
   history.push({ role: "user", content: input });
 
-  // 1) Git confirm pendiente
   if (getPending()) {
     const confirmed = await handleConfirmSpeech(input);
     if (confirmed) {
@@ -127,7 +164,6 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
     }
   }
 
-  // 2) Oferta proactiva (sí = ejecutar pasos)
   const offer = getOffer();
   if (offer) {
     if (isNegative(input)) {
@@ -156,67 +192,70 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
   }
 
   let plan = matchLocalCommand(raw);
-  if (!plan) {
-    const mem = memoryContextForAi();
-    plan = await askGroq(input, [
-      {
-        role: "system",
-        content: `Memoria Jarvis: ${JSON.stringify(mem).slice(0, 900)}`
-      },
-      ...history.filter((m) => m.role !== "system")
-    ]);
+  // Defensa: nunca aceptar promesas/objetos vacíos como plan
+  if (!plan || typeof plan.then === "function" || !plan.action) {
+    plan = null;
   }
-  plan = enrichWhoami(plan);
 
-  const action = plan.action || "none";
-  let ack = null;
-  let ackAudioUrl = null;
-  let ackPromise = Promise.resolve();
-
-  if (needsAck(action) || action === "delegate_code") {
-    ack = plan.say && plan.say.length < 100 ? plan.say : pick(ACK_PHRASES);
-    if (action === "delegate_code") ack = plan.say || "Voy con esa misión larga.";
-    if (browserAudio) {
-      ackAudioUrl = await prepareAudio(ack);
-    } else if (speakReply) {
-      ackPromise = speak(ack).catch((e) => console.error("[tts-ack]", e.message));
+  if (!plan) {
+    try {
+      const mem = memoryContextForAi();
+      plan = await askGroq(input, [
+        { role: "system", content: `Memoria corta: ${JSON.stringify(mem).slice(0, 400)}` },
+        ...history.filter((m) => m.role !== "system").slice(-6)
+      ]);
+    } catch (error) {
+      console.warn("[groq]", error.message);
+      plan = heuristicIntent(input) || {
+        action: "none",
+        args: {},
+        say: "Se me trabó la IA. Repite la orden más corto, tipo: abre WhatsApp."
+      };
     }
   }
 
-  const [result] = await Promise.all([runAction(action, plan.args || {}), ackPromise]);
+  if ((!plan || plan.action === "none") && heuristicIntent(input)) {
+    const forced = heuristicIntent(input);
+    // Solo fuerza si la IA no dio una respuesta conversacional útil
+    if (!plan?.say || plan.action === "none") {
+      plan = forced;
+    }
+  }
+
+  plan = enrichWhoami(plan || { action: "none", args: {}, say: "No te agarré, repite." });
+
+  const action = plan.action || "none";
+  // Sin ack de audio (era lento). Solo frase final.
+  const ack = needsAck(action) || action === "delegate_code"
+    ? plan.say && plan.say.length < 80
+      ? plan.say
+      : pick(ACK_PHRASES)
+    : null;
+
+  const result = await runAction(action, plan.args || {});
 
   let say;
   if (action === "none") {
     say = plan.say || "¿Qué más ocupas?";
   } else if (action === "multi") {
-    say =
-      plan.say ||
-      result.message ||
-      pick(["Listo, hice todo eso.", "Ya corrí los pasos.", "Hecho, bro."]);
+    say = plan.say || result.message || pick(DONE_PHRASES);
     if (result.ok === false) say = result.message || "Se me trabó a mitad del plan.";
   } else if (INFO_ACTIONS.has(action) || action === "delegate_code") {
     say = result.message || plan.say || pick(DONE_PHRASES);
   } else if (result.ok === false) {
-    say =
-      result.message ||
-      pick([
-        "No pude completar eso, bro.",
-        "Falló esa orden, ¿lo intentamos otra vez?",
-        "No me salió. Dame otra pista."
-      ]);
-  } else if (needsAck(action) && plan.say && plan.say !== ack) {
-    say = plan.say;
+    say = result.message || pick(FAIL_PHRASES);
   } else {
-    say = pick([...DONE_PHRASES, "Ya quedó, bro.", "Hecho, ¿qué sigue?", "Listo, eso ya corre."]);
+    say = plan.say && plan.say !== ack ? plan.say : pick(DONE_PHRASES);
   }
 
-  say = String(say || "").replace(/\s+/g, " ").trim().slice(0, 520);
+  say = String(say || "").replace(/\s+/g, " ").trim().slice(0, 420);
 
-  history.push({ role: "assistant", content: ack ? `${ack} ${say}` : say });
-  if (history.length > 28) history.splice(0, history.length - 28);
+  history.push({ role: "assistant", content: say });
+  if (history.length > 20) history.splice(0, history.length - 20);
 
   let audioUrl = null;
   if (browserAudio) {
+    // TTS con timeout corto; el cliente usa voz del navegador si no llega
     audioUrl = await prepareAudio(say);
   } else if (speakReply) {
     try {
@@ -226,11 +265,13 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
     }
   }
 
+  console.log(`[brain] ${Date.now() - started}ms action=${action}`);
+
   return {
     ok: Boolean(result?.ok !== false),
     say,
-    ack,
-    ackAudioUrl,
+    ack: null,
+    ackAudioUrl: null,
     audioUrl,
     action,
     result
