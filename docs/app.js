@@ -23,7 +23,6 @@ const KEYS = {
 };
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null;
 let busy = false;
 let history = [];
 const activeTimers = new Map();
@@ -766,36 +765,193 @@ saveBtn.addEventListener("click", () => {
 });
 
 function setupMic() {
-  if (!SpeechRecognition) {
-    micBtn.disabled = true;
-    micBtn.title = "Micrófono no soportado en este navegador";
-    return;
+  let mediaStream = null;
+  let mediaRecorder = null;
+  let chunks = [];
+  let recording = false;
+  let recordStartedAt = 0;
+  let autoStopTimer = null;
+
+  micBtn.disabled = false;
+  micBtn.title = "Toca para hablar / toca de nuevo para enviar";
+
+  async function ensureMic() {
+    if (mediaStream) return mediaStream;
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    });
+    return mediaStream;
   }
-  recognition = new SpeechRecognition();
-  recognition.lang = "es-MX";
-  recognition.interimResults = false;
-  recognition.onstart = () => {
-    micBtn.classList.add("listening");
-    voiceStatus.hidden = false;
-  };
-  recognition.onend = () => {
-    micBtn.classList.remove("listening");
-    voiceStatus.hidden = true;
-  };
-  recognition.onerror = () => {
-    micBtn.classList.remove("listening");
-    voiceStatus.hidden = true;
-  };
-  recognition.onresult = (event) => {
-    const text = event.results?.[0]?.[0]?.transcript || "";
-    if (text) handleUserText(text);
-  };
-  micBtn.addEventListener("click", () => {
-    try {
-      recognition.start();
-    } catch {
-      // ignore
+
+  function pickMime() {
+    const types = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",
+      "audio/ogg;codecs=opus",
+      "audio/wav"
+    ];
+    for (const t of types) {
+      if (window.MediaRecorder?.isTypeSupported?.(t)) return t;
     }
+    return "";
+  }
+
+  async function transcribeWithWhisper(blob) {
+    const key = localStorage.getItem(KEYS.api) || "";
+    if (!key) throw new Error("Falta tu Groq API Key. Toca ⚙ y pégala.");
+    const mime = blob.type || "audio/webm";
+    const ext = /mp4|m4a|aac/i.test(mime) ? "m4a" : /ogg/i.test(mime) ? "ogg" : "webm";
+    const form = new FormData();
+    form.append("file", blob, `voice.${ext}`);
+    form.append("model", "whisper-large-v3-turbo");
+    form.append("language", "es");
+    form.append("response_format", "json");
+    form.append("prompt", "Jarvis asistente en español de Guatemala");
+
+    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      body: form
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Mic/Whisper ${res.status}: ${err.slice(0, 140)}`);
+    }
+    const data = await res.json();
+    return String(data.text || "").trim();
+  }
+
+  async function tryWebSpeechOnce() {
+    if (!SpeechRecognition) return null;
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        resolve(v);
+      };
+      try {
+        const rec = new SpeechRecognition();
+        rec.lang = "es-MX";
+        rec.interimResults = false;
+        rec.maxAlternatives = 3;
+        rec.onresult = (e) => finish(e.results?.[0]?.[0]?.transcript || "");
+        rec.onerror = () => finish(null);
+        rec.onend = () => finish(null);
+        setTimeout(() => finish(null), 8000);
+        rec.start();
+      } catch {
+        finish(null);
+      }
+    });
+  }
+
+  async function stopAndSend() {
+    clearTimeout(autoStopTimer);
+    if (!recording || !mediaRecorder) return;
+    recording = false;
+    micBtn.classList.remove("listening");
+    voiceStatus.hidden = false;
+    voiceStatus.textContent = "Transcribiendo...";
+    statusLine.textContent = "Transcribiendo voz...";
+
+    const blob = await new Promise((resolve) => {
+      mediaRecorder.onstop = () => {
+        resolve(new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" }));
+      };
+      try {
+        mediaRecorder.stop();
+      } catch {
+        resolve(new Blob(chunks, { type: "audio/webm" }));
+      }
+    });
+    chunks = [];
+
+    const elapsed = Date.now() - recordStartedAt;
+    if (elapsed < 400 || blob.size < 800) {
+      voiceStatus.hidden = true;
+      statusLine.textContent = "Habla un poco más y vuelve a tocar el mic.";
+      addMessage("assistant", "No capté audio. Mantén pulsado/habla 1–2 segundos y toca de nuevo.");
+      return;
+    }
+
+    try {
+      let text = "";
+      try {
+        text = await transcribeWithWhisper(blob);
+      } catch (whisperErr) {
+        // Fallback Web Speech (Chrome Android)
+        const fallback = await tryWebSpeechOnce();
+        if (!fallback) throw whisperErr;
+        text = fallback;
+      }
+      voiceStatus.hidden = true;
+      if (!text) {
+        statusLine.textContent = "No entendí, intenta otra vez";
+        addMessage("assistant", "No entendí lo que dijiste. Prueba otra vez cerca del mic.");
+        return;
+      }
+      await handleUserText(text);
+    } catch (error) {
+      voiceStatus.hidden = true;
+      statusLine.textContent = "Error de micrófono";
+      addMessage(
+        "assistant",
+        error.message || "No pude usar el micrófono. Revisa permisos y tu API key."
+      );
+    }
+  }
+
+  async function startRecording() {
+    if (busy) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      // Último recurso: Web Speech solo
+      const text = await tryWebSpeechOnce();
+      if (text) return handleUserText(text);
+      addMessage("assistant", "Este navegador no deja grabar audio. Usa Chrome o Safari actualizado.");
+      return;
+    }
+
+    try {
+      const stream = await ensureMic();
+      chunks = [];
+      const mime = pickMime();
+      mediaRecorder = mime
+        ? new MediaRecorder(stream, { mimeType: mime })
+        : new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+      mediaRecorder.start(200);
+      recording = true;
+      recordStartedAt = Date.now();
+      micBtn.classList.add("listening");
+      voiceStatus.hidden = false;
+      voiceStatus.innerHTML = '<span class="wave"></span> Escuchando... toca otra vez para enviar';
+      statusLine.textContent = "Grabando... toca el mic para enviar";
+      autoStopTimer = setTimeout(() => {
+        if (recording) stopAndSend();
+      }, 15000);
+    } catch (error) {
+      const denied = /NotAllowed|Permission|Denied/i.test(String(error.name || error.message || ""));
+      addMessage(
+        "assistant",
+        denied
+          ? "Necesito permiso de micrófono. En el navegador: permitir micrófono para este sitio y recarga."
+          : `No pude abrir el mic: ${error.message || error}`
+      );
+      statusLine.textContent = "Sin permiso de micrófono";
+    }
+  }
+
+  micBtn.addEventListener("click", () => {
+    if (recording) stopAndSend();
+    else startRecording();
   });
 }
 
@@ -808,7 +964,7 @@ statusLine.textContent = localStorage.getItem(KEYS.api)
 
 addMessage(
   "assistant",
-  `Qué onda${localStorage.getItem(KEYS.name) ? `, ${localStorage.getItem(KEYS.name)}` : ""}. Jarvis pro en el cel: clima, crypto, pendientes, recordatorios, contactos, mapas, wiki… Di "ayuda" o "briefing".`
+  `Qué onda${localStorage.getItem(KEYS.name) ? `, ${localStorage.getItem(KEYS.name)}` : ""}. Toca 🎙, habla, y toca otra vez para enviarme el audio. Di "ayuda" o "briefing".`
 );
 
 if (!localStorage.getItem(KEYS.api)) settings.showModal();

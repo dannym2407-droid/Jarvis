@@ -150,6 +150,45 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
+    if (req.method === "POST" && url.pathname === "/api/transcribe") {
+      const body = await readBody(req);
+      if (!config.groqApiKey) {
+        return sendJson(res, 400, { error: "Falta GROQ_API_KEY en .env" });
+      }
+      const b64 = String(body.audioBase64 || "").replace(/^data:audio\/\w+;base64,/, "");
+      if (!b64) return sendJson(res, 400, { error: "Sin audio" });
+      const mime = String(body.mime || "audio/webm");
+      const ext = /mp4|m4a|aac/i.test(mime) ? "m4a" : /ogg/i.test(mime) ? "ogg" : /wav/i.test(mime) ? "wav" : "webm";
+      const tmp = path.join(os.tmpdir(), `jarvis-stt-${Date.now()}.${ext}`);
+      fs.writeFileSync(tmp, Buffer.from(b64, "base64"));
+      try {
+        const buf = fs.readFileSync(tmp);
+        const form = new FormData();
+        const file = new File([buf], `audio.${ext}`, { type: mime });
+        form.append("file", file);
+        form.append("model", "whisper-large-v3-turbo");
+        form.append("language", "es");
+        form.append("response_format", "json");
+        const tr = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${config.groqApiKey}` },
+          body: form
+        });
+        const raw = await tr.text();
+        if (!tr.ok) {
+          return sendJson(res, 502, { error: `Whisper ${tr.status}: ${raw.slice(0, 180)}` });
+        }
+        const data = JSON.parse(raw);
+        return sendJson(res, 200, { ok: true, text: String(data.text || "").trim() });
+      } finally {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/api/clear") {
       clearHistory();
       return sendJson(res, 200, { ok: true });

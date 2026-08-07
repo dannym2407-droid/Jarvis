@@ -2,6 +2,7 @@ const actions = require("./system");
 const extra = require("./extra");
 const pro = require("./pro");
 const power = require("./power");
+const flex = require("./flex");
 const { whatsappMessage } = require("./whatsapp");
 
 const APP_ALIASES = [
@@ -201,11 +202,35 @@ async function runAction(action, args = {}) {
       return power.generateQrText(args.text);
     case "password_copy":
       return power.copyPassword(args.length);
+    case "launch_any":
+      return flex.launchAny(args.name);
+    case "hotkey":
+      return flex.hotkey(args.keys);
+    case "write_file":
+      return flex.writeFileSafe(args);
+    case "read_file":
+      return flex.readFileSafe(args);
+    case "list_dir":
+      return flex.listDirSafe(args);
+    case "type_enter":
+      return flex.typeAndEnter(args.text);
+    case "start_search":
+      return flex.searchEverything(args.query);
+    case "open_desktop":
+      return flex.openDesktopFile(args.name);
+    case "desktop_note":
+      return flex.createNoteOnDesktop(args);
+    case "multi":
+      return flex.multiRun(args.steps || [], runAction);
     case "none":
     case undefined:
     case null:
       return { ok: true, message: "" };
     default:
+      // Último recurso: si parece nombre de app, intenta lanzarla
+      if (action && !action.includes("_") && String(action).length < 40) {
+        return flex.launchAny(action);
+      }
       return { ok: false, message: `Acción desconocida: ${action}` };
   }
 }
@@ -239,6 +264,41 @@ function matchLocalCommand(rawText) {
 
   if (/briefing|reporte|como esta todo|cómo está todo|status general/.test(t)) {
     return { action: "briefing", args: {}, say: "Te armo el briefing." };
+  }
+
+  const startSearch = t.match(/(?:busca(?:r)? en (?:inicio|el menu|el menú)|abre desde inicio)\s+(.+)$/);
+  if (startSearch) {
+    return { action: "start_search", args: { query: startSearch[1].trim() }, say: `Busco ${startSearch[1].trim()} en Inicio.` };
+  }
+
+  const deskNote = t.match(/(?:crea(?:r)?|haz|guarda)\s+(?:una\s+)?nota(?:\s+en\s+el\s+escritorio)?\s+(?:llamada\s+)?(.+?)(?:\s+con\s+|:\s*)(.+)$/);
+  if (deskNote) {
+    return {
+      action: "desktop_note",
+      args: { title: deskNote[1].trim(), content: deskNote[2].trim() },
+      say: "Creo la nota en el escritorio."
+    };
+  }
+
+  const deskOpen = t.match(/(?:abre|abrir)\s+(?:del\s+)?escritorio\s+(.+)$/);
+  if (deskOpen) {
+    return { action: "open_desktop", args: { name: deskOpen[1].trim() }, say: null };
+  }
+
+  // Pedidos compuestos simples: "abre X y busca Y"
+  const compound = t.match(/^(abre|abrir)\s+(.+?)\s+y\s+(busca|buscar|googlea)\s+(.+)$/);
+  if (compound) {
+    const app = resolveAppName(compound[2].trim()) || compound[2].trim();
+    return {
+      action: "multi",
+      args: {
+        steps: [
+          { action: resolveAppName(compound[2].trim()) ? "open_app" : "launch_any", args: { name: app } },
+          { action: "search_web", args: { query: compound[4].trim(), type: "web" } }
+        ]
+      },
+      say: "Va, abro y busco."
+    };
   }
 
   if (/espacio (en )?(disco|disco duro)|cuanto (disco|espacio)|cuánto (disco|espacio)|disco libre/.test(t)) {

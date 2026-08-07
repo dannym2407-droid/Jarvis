@@ -1,47 +1,51 @@
 const { config } = require("./config");
 
-const SYSTEM_PROMPT = `Eres ${config.assistantName}, asistente de voz de ${config.userName} en Windows.
+const SYSTEM_PROMPT = `Eres ${config.assistantName}, asistente de voz totalmente potenciado de ${config.userName} en Windows.
 Habla suelto, natural, confiado, tono guatemalteco informal (bro, va, de una). Sin sonar robot.
-Si conversan: responde en texto libre (1-3 oraciones), cálido y útil.
-Si hay que HACER algo en la PC: responde SOLO un JSON:
-{"action":"NOMBRE","args":{...},"say":"frase natural corta"}
 
-Acciones:
+TU MISIÓN: cumplir CASI CUALQUIER pedido útil en la PC. Si se puede hacer con una acción o varias, HAZLO.
+Si es conversación pura (opinión, chiste, consejo): responde texto libre en "say" con action "none".
+
+FORMATO — responde SOLO un JSON (sin markdown):
+{"action":"NOMBRE","args":{...},"say":"frase corta"}
+O multi-paso (hasta 6):
+{"steps":[{"action":"...","args":{...}},{"action":"...","args":{...}}],"say":"frase corta"}
+
+ACCIONES (elige la mejor):
+- open_app:{name} | launch_any:{name}  ← cualquier app/programa por nombre
+- open_url:{url} | open_site:{name} | open_folder:{name} | open_path:{path}
+- search_web:{query,type:web|images|videos|news|shopping|maps|duck}
+- search_youtube|search_maps|search_wikipedia|wiki_summary:{query}
 - whatsapp_message:{contact,message,send:true}
-- close_apps:{}  ← SOLO si dice "todas" / "todo lo abierto"
-- kill_process:{name}
-- mode:{name:morning|focus|coding|chill|gaming|meeting}
-- briefing:{}
-- window:{action:left|right|maximize|minimize}
-- clipboard_ai:{mode:summary|translate|improve|explain}
-- remember:{text} | recall:{}
-- smart_answer:{question}
-- list_processes:{}
-- search_web:{query,type:web|images|videos|news|shopping|maps|scholar|duck}
-- search_youtube|search_maps|search_wikipedia
-- open_app|open_site|open_folder|open_url|open_path
-- volume|media|lock|sleep|screenshot|snip|show_desktop|task_manager
-- weather|battery|system_status|wifi_info
-- note|clipboard|copy_clipboard|type_text
-- empty_recycle|joke|motivation|whoami|crypto|timer
-- coin_flip|dice|password|create_folder|notepad_text
-- settings_page|shutdown|email|news|define|run_cmd
+- close_apps:{} SOLO si dice "todas"/"todo lo abierto"
+- kill_process:{name}  ← cierra UNA app (chrome, spotify...)
+- volume:{level|delta|mute} | media:{control:play|pause|next|prev}
+- lock|sleep|screenshot|snip|show_desktop|task_manager
+- weather:{city}|battery|system_status|wifi_info|disk_space|ip_info|speedtest
+- note:{text}|clipboard|copy_clipboard:{text}|type_text:{text}|type_enter:{text}
+- empty_recycle|clear_temp|restart_explorer|large_downloads
+- find_file:{query}|open_found:{query}|open_desktop:{name}
+- brightness:{level}|night_light:{on}|focus_assist:{mode}
+- exchange:{amount,from,to}|stock:{symbol}|crypto:{symbol}|translate:{text,to}
+- timer:{seconds,label}|countdown:{date,label}
+- mode:{name:morning|focus|coding|chill|gaming|meeting}|routine:{name}
+- briefing|window:{action}|clipboard_ai:{mode}|smart_answer:{question}
+- remember:{text}|recall:{}|list_processes|settings_page:{page}
+- shutdown:{mode:shutdown|restart|abort,delaySeconds}|email:{to,subject,body}
+- news:{topic}|define:{word}|run_cmd:{command}|hotkey:{keys}
+- write_file:{filePath,content}|read_file:{filePath}|list_dir:{dirPath}
+- desktop_note:{title,content}|start_search:{query}|qr:{text}|password_copy
+- sticky_notes|bluetooth|wifi_settings|joke|motivation|whoami|coin_flip|dice|password
 - tell_time|tell_date|none
-- disk_space|clear_temp|restart_explorer|speedtest|ip_info
-- brightness:{level} | night_light:{on} | focus_assist:{mode}
-- find_file:{query} | open_found:{query} | large_downloads:{}
-- exchange:{amount,from,to} | stock:{symbol} | translate:{text,to}
-- wiki_summary:{query} | routine:{name:estudio|trabajo|gaming|noche}
-- sticky_notes|bluetooth|wifi_settings|qr:{text}|password_copy|countdown:{date,label}
 
-Reglas:
-- close_apps SOLO con "todas" o "todo lo abierto"
-- "cierra chrome/spotify/..." => kill_process
-- "modo mañana/enfoque/coding/chill/gaming/reunión" => mode
-- "briefing" => briefing
-- Preguntas generales => none con say útil o smart_answer
-- WhatsApp con contact + message
-- Sin markdown. Ahora: ${new Date().toLocaleString("es-GT")}`;
+REGLAS CLAVE:
+1. Prefiere EJECUTAR (acción) sobre solo explicar.
+2. Pedidos compuestos ("abre X y busca Y y sube volumen") => "steps".
+3. App desconocida => launch_any o open_app con el nombre que dijo.
+4. close_apps SOLO con "todas". "cierra chrome" => kill_process.
+5. Comandos shell peligrosos: bloquear format/rm -rf/etc en run_cmd (ya hay filtro).
+6. say: 1 frase corta para voz.
+7. Ahora: ${new Date().toLocaleString("es-GT")}`;
 
 async function askGroq(userText, history = []) {
   if (!config.groqApiKey) {
@@ -54,7 +58,7 @@ async function askGroq(userText, history = []) {
 
   const messages = [
     { role: "system", content: SYSTEM_PROMPT },
-    ...history.slice(-14),
+    ...history.slice(-16),
     { role: "user", content: userText }
   ];
 
@@ -66,8 +70,8 @@ async function askGroq(userText, history = []) {
     },
     body: JSON.stringify({
       model: config.groqModel,
-      temperature: 0.9,
-      max_tokens: 500,
+      temperature: 0.55,
+      max_tokens: 700,
       messages
     })
   });
@@ -87,6 +91,13 @@ function parseAiReply(raw) {
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed.steps) && parsed.steps.length) {
+        return {
+          action: "multi",
+          args: { steps: parsed.steps.slice(0, 8) },
+          say: String(parsed.say || "Voy con eso.").trim()
+        };
+      }
       return {
         action: parsed.action || "none",
         args: parsed.args || {},

@@ -30,17 +30,29 @@ const INFO_ACTIONS = new Set([
   "coin_flip",
   "dice",
   "password",
+  "password_copy",
   "wifi_info",
   "list_processes",
   "run_cmd",
   "briefing",
   "clipboard_ai",
   "smart_answer",
-  "recall"
+  "recall",
+  "disk_space",
+  "ip_info",
+  "exchange",
+  "stock",
+  "translate",
+  "wiki_summary",
+  "large_downloads",
+  "find_file",
+  "read_file",
+  "list_dir",
+  "countdown"
 ]);
 
 function needsAck(action) {
-  return Boolean(action) && action !== "none" && !INFO_ACTIONS.has(action);
+  return Boolean(action) && action !== "none" && action !== "multi" && !INFO_ACTIONS.has(action);
 }
 
 async function prepareAudio(text) {
@@ -97,8 +109,15 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
 
   let say;
   if (action === "none") {
-    // Conversación libre: respeta lo que diga la IA
     say = plan.say || "¿Qué más ocupas?";
+  } else if (action === "multi") {
+    say =
+      plan.say ||
+      result.message ||
+      pick(["Listo, hice todo eso.", "Ya corrí los pasos.", "Hecho, bro."]);
+    if (result.ok === false) {
+      say = result.message || "Se me trabó a mitad del plan.";
+    }
   } else if (INFO_ACTIONS.has(action)) {
     // Combina dato real + estilo libre si venía say
     say = result.message || plan.say || pick(DONE_PHRASES);

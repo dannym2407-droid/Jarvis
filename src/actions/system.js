@@ -147,7 +147,18 @@ async function openApp(name) {
 
   const candidates = APP_MAP[key];
   if (!candidates) {
-    return { ok: false, message: `No conozco la app "${name}".` };
+    // Intenta lanzar cualquier cosa por nombre
+    try {
+      await runShell(`Start-Process ${psQuote(name)}`);
+      return { ok: true, message: `Abrí ${name}.` };
+    } catch {
+      try {
+        await runShell(`cmd /c start "" ${psQuote(name)}`);
+        return { ok: true, message: `Lancé ${name}.` };
+      } catch {
+        return { ok: false, message: `No conozco la app "${name}". Prueba: "abre ${name}" otra vez o di el .exe.` };
+      }
+    }
   }
 
   if (key === "settings") {
