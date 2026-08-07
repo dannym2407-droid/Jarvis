@@ -116,7 +116,39 @@ html, body {
   font-size: 0.9rem;
   font-weight: 400;
 }
-.hint em {
+.hint em,
+.hint strong {
   font-style: normal;
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+.text-form {
+  display: flex;
+  gap: 8px;
+  width: min(92vw, 420px);
+  margin-top: 6px;
+}
+.text-form input {
+  flex: 1;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid #1e3a4c;
+  background: #0b1722;
+  color: var(--text);
+  padding: 0 14px;
+  font: inherit;
+  font-size: 0.95rem;
+}
+.text-form button {
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 16px;
+  background: linear-gradient(160deg, #14b8a6, #0f766e);
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
   color: var(--text);
 }

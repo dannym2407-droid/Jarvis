@@ -10,10 +10,14 @@
   <div class="bg" aria-hidden="true"></div>
   <main class="stage">
     <p class="brand">JARVIS</p>
-    <button id="orbBtn" class="orb idle" type="button" aria-label="Activar o pausar micrófono"></button>
+    <button id="orbBtn" class="orb idle" type="button" aria-label="Grabar orden por voz"></button>
     <p id="stateLine" class="state">Iniciando...</p>
     <p id="heardLine" class="heard" hidden></p>
-    <p class="hint">Prueba: <em>briefing</em> · <em>modo enfoque</em> · <em>modo mañana</em> · <em>resume el portapapeles</em></p>
+    <p class="hint"><strong>1 toque</strong> = empezar a hablar · <strong>2º toque</strong> = enviar</p>
+    <form id="textForm" class="text-form" autocomplete="off">
+      <input id="textInput" type="text" placeholder="O escribe aquí: abre Chrome..." maxlength="500" />
+      <button type="submit">Enviar</button>
+    </form>
   </main>
   <script src="/app.js"></script>
 </body>
