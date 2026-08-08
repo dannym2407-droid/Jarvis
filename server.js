@@ -102,6 +102,9 @@ const server = http.createServer(async (req, res) => {
       } catch (error) {
         console.warn("[greet-audio]", error.message);
       }
+      if (process.env.JARVIS_ELECTRON === "1") {
+        speak(text).catch(() => {});
+      }
       return sendJson(res, 200, { text, audioUrl });
     }
 
@@ -126,11 +129,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/command") {
       const body = await readBody(req);
       const browserAudio = body.browserAudio !== false;
-      const speakReply = browserAudio ? false : body.speak !== false;
+      const speakSystem = Boolean(body.speakSystem) || process.env.JARVIS_ELECTRON === "1";
+      const speakReply = speakSystem ? true : browserAudio ? false : body.speak !== false;
       console.log("[cmd]", body.text);
       const result = await handleInstruction(body.text || "", {
-        speakReply,
-        browserAudio
+        speakReply: speakSystem || speakReply,
+        browserAudio,
+        speakSystem
       });
       console.log("[result]", result.action, result.say);
       return sendJson(res, 200, result);

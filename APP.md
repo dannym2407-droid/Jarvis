@@ -25,7 +25,6 @@ start.bat
 ```
 o `npm start` → http://127.0.0.1:8787/
 
-## Requisitos
-- Node 18+
-- `.env` con `GROQ_API_KEY`
-- Micrófono permitido
+### Voz en otra app
+Jarvis habla por el **sistema** (se oye aunque estés en Chrome/Cursor).
+El mic sigue activo con la ventana oculta; `Ctrl+Shift+J` reactiva si lo pausaste.

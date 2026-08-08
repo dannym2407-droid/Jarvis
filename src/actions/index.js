@@ -14,6 +14,10 @@ const { whatsappMessage } = require("./whatsapp");
 const APP_ALIASES = [
   ["whatsapp", "whatsapp"],
   ["wasap", "whatsapp"],
+  ["watsap", "whatsapp"],
+  ["guasap", "whatsapp"],
+  ["wassap", "whatsapp"],
+  ["whats app", "whatsapp"],
   ["chrome", "chrome"],
   ["navegador", "chrome"],
   ["opera", "opera"],
@@ -25,13 +29,18 @@ const APP_ALIASES = [
   ["spotify", "spotify"],
   ["discord", "discord"],
   ["visual studio code", "vscode"],
+  ["visual studio", "vscode"],
+  ["visual code", "vscode"],
   ["vs code", "vscode"],
   ["vscode", "vscode"],
   ["visual", "vscode"],
+  ["codigo", "vscode"],
+  ["code", "vscode"],
   ["cursor", "cursor"],
   ["calculadora", "calculator"],
   ["calc", "calculator"],
-  ["terminal", "powershell"],
+  ["windows terminal", "terminal"],
+  ["terminal", "terminal"],
   ["powershell", "powershell"],
   ["cmd", "cmd"],
   ["configuracion", "settings"],
@@ -53,12 +62,60 @@ const APP_ALIASES = [
 ];
 
 function resolveAppName(target) {
-  const t = String(target || "").toLowerCase().trim();
-  for (const [alias, name] of APP_ALIASES) {
-    if (t === alias || t.includes(alias)) return name;
+  const t = String(target || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[¿?¡!.,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return null;
+
+  const sorted = [...APP_ALIASES].sort((a, b) => b[0].length - a[0].length);
+  for (const [alias, name] of sorted) {
+    if (t === alias) return name;
+    if (alias.length >= 4 && t.includes(alias)) return name;
+    // aliases cortos: solo palabra completa
+    if (alias.length < 4) {
+      const re = new RegExp(`(?:^|\\s)${alias}(?:\\s|$)`);
+      if (re.test(t)) return name;
+    }
   }
+
+  const normalized = actions.normalizeAppKey(t);
+  if (normalized && APP_MAP_KEYS.has(normalized)) return normalized;
   return null;
 }
+
+// keys conocidas para resolve fallback
+const APP_MAP_KEYS = new Set([
+  "chrome",
+  "edge",
+  "notepad",
+  "explorer",
+  "spotify",
+  "discord",
+  "vscode",
+  "visualstudio",
+  "cursor",
+  "calculator",
+  "cmd",
+  "powershell",
+  "terminal",
+  "settings",
+  "whatsapp",
+  "opera",
+  "youtube",
+  "github",
+  "chatgpt",
+  "notion",
+  "figma",
+  "slack",
+  "word",
+  "excel",
+  "powerpoint",
+  "teams"
+]);
 
 async function runAction(action, args = {}) {
   switch (action) {
@@ -69,6 +126,13 @@ async function runAction(action, args = {}) {
         return extra.openSite(args.name === "chatgpt" ? "chatgpt" : args.name);
       }
       return actions.openApp(args.name);
+    case "launch_any": {
+      const known = resolveAppName(args.name) || (APP_MAP_KEYS.has(actions.normalizeAppKey(args.name))
+        ? actions.normalizeAppKey(args.name)
+        : null);
+      if (known) return actions.openApp(known);
+      return flex.launchAny(args.name);
+    }
     case "open_url":
       return actions.openUrl(args.url);
     case "open_path":
@@ -221,8 +285,6 @@ async function runAction(action, args = {}) {
       return power.generateQrText(args.text);
     case "password_copy":
       return power.copyPassword(args.length);
-    case "launch_any":
-      return flex.launchAny(args.name);
     case "hotkey":
       return flex.hotkey(args.keys);
     case "write_file":
@@ -864,10 +926,12 @@ function matchLocalCommand(rawText) {
   if (openMatch) {
     const target = openMatch[2].trim();
     const app = resolveAppName(target);
-    if (app) return { action: "open_app", args: { name: app }, say: `Abro ${app}.` };
+    if (app) return { action: "open_app", args: { name: app }, say: `Abro ${app === "vscode" ? "VS Code" : app}.` };
     if (/^https?:\/\//.test(target)) {
       return { action: "open_url", args: { url: target }, say: "Abro el link." };
     }
+    // Apps desconocidas: lanzar por nombre de menú Inicio, NUNCA buscar archivo
+    return { action: "launch_any", args: { name: target }, say: `Abro ${target}.` };
   }
 
   // Cerrar ChatGPT / ventanas mal reconocidas por el mic

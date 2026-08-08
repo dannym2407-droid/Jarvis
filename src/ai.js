@@ -17,7 +17,8 @@ diagnose explain_terminal project_health search_youtube lock screenshot
 mode:{name} briefing radar workspace delegate_code:{project,prompt,editor}
 none
 
-Reglas: "abre X"=>open_app/launch_any. "cierra X"=>kill_process. "busca X"=>search_web.
+Reglas: "abre X"=>open_app con name canónico (whatsapp, vscode, cursor, chrome, terminal...).
+NUNCA uses find_file ni start_search para abrir apps. "visual"/"vs code"/"code"=>vscode. "wasap"=>whatsapp.
 say máximo 12 palabras. Ahora: ${new Date().toLocaleString("es-GT")}`;
 
 async function askGroq(userText, history = []) {

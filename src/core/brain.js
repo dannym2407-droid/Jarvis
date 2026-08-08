@@ -131,7 +131,39 @@ function heuristicIntent(text) {
   return null;
 }
 
-async function handleInstruction(text, { speakReply = true, browserAudio = false } = {}) {
+/** Si la IA mandó find_file/launch raro para una app conocida, corrige. */
+function coerceAppPlan(plan, text) {
+  const p = plan || { action: "none", args: {}, say: "" };
+  const openHint = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+
+  const wantsOpen = /^(abre|abrir|open)\b/.test(openHint.trim()) || /\babre\b/.test(openHint);
+  const nameGuess =
+    p.args?.name ||
+    p.args?.query ||
+    openHint.match(/(?:abre|abrir|open)\s+(?:el |la |los |las )?(.+)$/)?.[1] ||
+    "";
+
+  const app = resolveAppName(nameGuess) || resolveAppName(openHint);
+  if (app && (wantsOpen || ["launch_any", "find_file", "open_found", "start_search", "open_path", "open_desktop"].includes(p.action))) {
+    return {
+      action: "open_app",
+      args: { name: app },
+      say: p.say && p.say.length < 60 ? p.say : `Abro ${app === "vscode" ? "VS Code" : app}.`
+    };
+  }
+
+  if (p.action === "open_app" && p.args?.name) {
+    const fixed = resolveAppName(p.args.name) || p.args.name;
+    return { ...p, args: { ...p.args, name: fixed } };
+  }
+
+  return p;
+}
+
+async function handleInstruction(text, { speakReply = true, browserAudio = false, speakSystem = false } = {}) {
   const started = Date.now();
   const raw = String(text || "").trim();
   const input = stripWakeWord(raw);
@@ -223,6 +255,7 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
   }
 
   plan = enrichWhoami(plan || { action: "none", args: {}, say: "No te agarré, repite." });
+  plan = coerceAppPlan(plan, input);
 
   const action = plan.action || "none";
   // Sin ack de audio (era lento). Solo frase final.
@@ -254,12 +287,18 @@ async function handleInstruction(text, { speakReply = true, browserAudio = false
   if (history.length > 20) history.splice(0, history.length - 20);
 
   let audioUrl = null;
+  const shouldSpeakOutLoud = speakSystem || process.env.JARVIS_ELECTRON === "1" || (speakReply && !browserAudio);
   if (browserAudio) {
-    // TTS con timeout corto; el cliente usa voz del navegador si no llega
     audioUrl = await prepareAudio(say);
-  } else if (speakReply) {
+  }
+  // Habla por el sistema (se oye aunque estés en otra app)
+  if (shouldSpeakOutLoud) {
     try {
-      await speak(say);
+      if (speakSystem || process.env.JARVIS_ELECTRON === "1") {
+        speak(say).catch((e) => console.error("[tts]", e.message));
+      } else {
+        await speak(say);
+      }
     } catch (error) {
       console.error("[tts]", error.message);
     }

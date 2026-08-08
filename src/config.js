@@ -33,7 +33,9 @@ const config = {
   host: process.env.HOST || "0.0.0.0",
   userName: process.env.USER_NAME || "Danny",
   voiceLang: process.env.VOICE_LANG || "es-MX",
-  voiceMale: process.env.VOICE_MALE || "es-MX-JorgeNeural",
+  // Voz clara (mujer MX). Cambia en .env: VOICE_NAME=es-MX-JorgeNeural | es-ES-ElviraNeural | etc.
+  voiceName: process.env.VOICE_NAME || process.env.VOICE_MALE || "es-MX-DaliaNeural",
+  voiceMale: process.env.VOICE_NAME || process.env.VOICE_MALE || "es-MX-DaliaNeural",
   groqApiKey: process.env.GROQ_API_KEY || "",
   groqModel: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
   groqModelFast: process.env.GROQ_MODEL_FAST || "llama-3.1-8b-instant",

@@ -32,7 +32,7 @@ function sanitize(text) {
     .slice(0, 480);
 }
 
-function cacheFileFor(text, voice = config.voiceMale || "es-MX-JorgeNeural") {
+function cacheFileFor(text, voice = config.voiceName || config.voiceMale || "es-MX-DaliaNeural") {
   ensureCacheDir();
   const key = crypto.createHash("sha1").update(`${voice}|${text}`).digest("hex");
   return path.join(CACHE_DIR, `${key}.mp3`);
@@ -67,7 +67,7 @@ function run(command, args, timeoutMs = 60000) {
 function getCachedAudioFile(text) {
   const safe = sanitize(text);
   if (!safe) return null;
-  const voice = config.voiceMale || "es-MX-JorgeNeural";
+  const voice = config.voiceName || config.voiceMale || "es-MX-DaliaNeural";
   const out = cacheFileFor(safe, voice);
   if (fs.existsSync(out) && fs.statSync(out).size > 100) return out;
   return null;
@@ -76,7 +76,7 @@ function getCachedAudioFile(text) {
 async function synthesizeToFile(text) {
   const safe = sanitize(text);
   if (!safe) return null;
-  const voice = config.voiceMale || "es-MX-JorgeNeural";
+  const voice = config.voiceName || config.voiceMale || "es-MX-DaliaNeural";
   const out = cacheFileFor(safe, voice);
   if (fs.existsSync(out) && fs.statSync(out).size > 100) return out;
 
@@ -90,17 +90,16 @@ function warmAudioAsync(text) {
   synthesizeToFile(text).catch(() => {});
 }
 
-async function speakSapi(text, { rate = 2 } = {}) {
+async function speakSapi(text, { rate = 1 } = {}) {
   const safe = sanitize(text).replace(/"/g, "'");
   const script = `
 Add-Type -AssemblyName System.Speech
 $speak = New-Object System.Speech.Synthesis.SpeechSynthesizer
-$speak.Rate = ${Number(rate) || 2}
+$speak.Rate = ${Number(rate) || 1}
 $voices = $speak.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo }
-$male = $voices | Where-Object { $_.Gender -eq 'Male' } | Select-Object -First 1
-$es = $voices | Where-Object { $_.Culture.Name -like 'es*' } | Select-Object -First 1
-if ($male) { $speak.SelectVoice($male.Name) }
-elseif ($es) { $speak.SelectVoice($es.Name) }
+$es = $voices | Where-Object { $_.Culture.Name -like 'es-MX*' } | Select-Object -First 1
+if (-not $es) { $es = $voices | Where-Object { $_.Culture.Name -like 'es*' } | Select-Object -First 1 }
+if ($es) { $speak.SelectVoice($es.Name) }
 $speak.Speak("${safe}")
 `;
   await run("powershell.exe", [

@@ -13,7 +13,24 @@ let currentAudio = null;
 let networkFailCount = 0;
 let armedUntil = 0; // ventana post "Hey Jarvis"
 
+// Mic Whisper (Electron / fallback)
+let mediaStream = null;
+let mediaRecorder = null;
+let recChunks = [];
+let recording = false;
+let vadTimer = null;
+let speechSeen = false;
+let silenceMs = 0;
+let recordStartedAt = 0;
+let audioCtx = null;
+let analyser = null;
+let vadRaf = null;
+
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const isElectronApp =
+  Boolean(window.jarvisDesktop?.isElectron) || /Electron/i.test(navigator.userAgent || "");
+// En Electron el reconocimiento de Google falla casi siempre → Whisper local + Groq
+let useWhisperMic = isElectronApp || !SpeechRecognition;
 const WAKE_RE =
   /\b((hey|oye|ok|okay|hola|ei|ey)\s+)?(jarvis|yarvis|jarviz|yarbis|jarbi|jarbis|harvey|jarves|llaves|yavis)\b/i;
 const COMMAND_RE =
@@ -92,6 +109,235 @@ async function api(path, body) {
   return data;
 }
 
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function transcribeBlob(blob) {
+  const audioBase64 = await blobToBase64(blob);
+  const data = await api("/api/transcribe", {
+    audioBase64,
+    mime: blob.type || "audio/webm"
+  });
+  return String(data.text || "").trim();
+}
+
+function pickMime() {
+  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+  for (const t of types) {
+    if (window.MediaRecorder?.isTypeSupported?.(t)) return t;
+  }
+  return "";
+}
+
+async function ensureMicStream() {
+  if (mediaStream) {
+    const live = mediaStream.getTracks().some((t) => t.readyState === "live");
+    if (live) return mediaStream;
+  }
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  });
+  return mediaStream;
+}
+
+function stopVad() {
+  if (vadRaf) cancelAnimationFrame(vadRaf);
+  vadRaf = null;
+  clearTimeout(vadTimer);
+  vadTimer = null;
+  try {
+    audioCtx?.close();
+  } catch {
+    // ignore
+  }
+  audioCtx = null;
+  analyser = null;
+}
+
+function startVad(stream) {
+  stopVad();
+  speechSeen = false;
+  silenceMs = 0;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioCtx.createMediaStreamSource(stream);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.fftSize);
+  let last = performance.now();
+
+  const loop = () => {
+    if (!recording || muted || busy) return;
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / data.length);
+    const now = performance.now();
+    const dt = now - last;
+    last = now;
+
+    // Umbral bajo: mics de laptop a veces dan RMS pequeño
+    if (rms > 0.018) {
+      speechSeen = true;
+      silenceMs = 0;
+      const lvl = Math.min(99, Math.round(rms * 400));
+      setState(`Te escucho… (${lvl})`);
+    } else if (speechSeen) {
+      silenceMs += dt;
+      if (silenceMs > 900) {
+        stopWhisperTake();
+        return;
+      }
+    } else if (Date.now() - recordStartedAt > 400) {
+      setState("Mic ON · habla claro y pausa al terminar");
+    }
+
+    // máximo 12s por toma
+    if (Date.now() - recordStartedAt > 12000) {
+      stopWhisperTake();
+      return;
+    }
+    vadRaf = requestAnimationFrame(loop);
+  };
+  vadRaf = requestAnimationFrame(loop);
+}
+
+async function startWhisperTake() {
+  if (busy || recording || muted || !wakeMode) return;
+  try {
+    const stream = await ensureMicStream();
+    recChunks = [];
+    const mime = pickMime();
+    mediaRecorder = mime
+      ? new MediaRecorder(stream, { mimeType: mime })
+      : new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data?.size) recChunks.push(e.data);
+    };
+    mediaRecorder.start(200);
+    recording = true;
+    recordStartedAt = Date.now();
+    setOrb("listening");
+    setState(isElectronApp ? "Mic ON · habla y pausa al terminar" : "Habla...");
+    startVad(stream);
+  } catch (error) {
+    console.warn(error);
+    setState("No pude abrir el micrófono. Revisa permisos de Windows.");
+    setOrb("paused");
+    wakeMode = false;
+  }
+}
+
+async function stopWhisperTake() {
+  if (!recording || !mediaRecorder) return;
+  recording = false;
+  stopVad();
+  setOrb("thinking");
+  setState("Entendiendo...");
+
+  const blob = await new Promise((resolve) => {
+    mediaRecorder.onstop = () => {
+      resolve(new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" }));
+    };
+    try {
+      if (mediaRecorder.state !== "inactive") mediaRecorder.stop();
+      else resolve(new Blob(recChunks, { type: "audio/webm" }));
+    } catch {
+      resolve(new Blob(recChunks, { type: "audio/webm" }));
+    }
+  });
+
+  const elapsed = Date.now() - recordStartedAt;
+  if (!speechSeen || elapsed < 500 || blob.size < 900) {
+    if (wakeMode && !muted && !busy) {
+      setOrb("listening");
+      setState("No te oí. Habla otra vez...");
+      setTimeout(() => startWhisperTake(), 350);
+    }
+    return;
+  }
+
+  try {
+    const text = await transcribeBlob(blob);
+    if (!text) {
+      if (wakeMode && !muted) {
+        setState("No entendí. Repite...");
+        setTimeout(() => startWhisperTake(), 400);
+      }
+      return;
+    }
+    showHeard(text);
+
+    // En app / Whisper: órdenes directas sin forzar "Hey Jarvis"
+    let decision = shouldHandle(text);
+    if (!decision && useWhisperMic && text.trim().length >= 3) {
+      decision = text.trim();
+    }
+    if (!decision) {
+      if (wakeMode && !muted) {
+        setState("Escuchando...");
+        setTimeout(() => startWhisperTake(), 400);
+      }
+      return;
+    }
+    if (decision === "__WAKE_ONLY__") {
+      armedUntil = Date.now() + 15000;
+      setState("Dime la orden...");
+      if (wakeMode && !muted) setTimeout(() => startWhisperTake(), 300);
+      return;
+    }
+    await runVoiceCommand(decision);
+  } catch (error) {
+    setState(error.message || "Falló el micrófono");
+    if (wakeMode && !muted && !busy) setTimeout(() => startWhisperTake(), 800);
+  }
+}
+
+function pauseMic() {
+  try {
+    wakeRecognition?.stop();
+  } catch {
+    // ignore
+  }
+  if (recording) {
+    // no cortar a mitad de forma agresiva salvo busy
+  }
+}
+
+function resumeMicSoon(delayMs = 400) {
+  if (!wakeMode || muted) return;
+  setTimeout(() => {
+    if (!wakeMode || muted || busy) return;
+    if (useWhisperMic) {
+      startWhisperTake();
+      return;
+    }
+    try {
+      wakeRecognition.start();
+      setOrb("listening");
+      setState("Escuchando · di Hey Jarvis");
+    } catch {
+      // already started
+    }
+  }, delayMs);
+}
+
 function extractAfterWake(transcript) {
   const text = String(transcript || "").trim();
   if (!WAKE_RE.test(text)) return null;
@@ -121,28 +367,6 @@ function shouldHandle(transcript) {
   return null;
 }
 
-function pauseMic() {
-  try {
-    wakeRecognition?.stop();
-  } catch {
-    // ignore
-  }
-}
-
-function resumeMicSoon(delayMs = 400) {
-  if (!wakeMode || muted) return;
-  setTimeout(() => {
-    if (!wakeMode || muted || busy) return;
-    try {
-      wakeRecognition.start();
-      setOrb("listening");
-      setState(Date.now() < armedUntil ? "Dime la orden..." : "Escuchando · di Hey Jarvis");
-    } catch {
-      // already started
-    }
-  }, delayMs);
-}
-
 async function runVoiceCommand(text) {
   const value = String(text || "").trim();
   if (!value || busy) return;
@@ -150,6 +374,15 @@ async function runVoiceCommand(text) {
   busy = true;
   armedUntil = 0;
   pauseMic();
+  if (recording) {
+    try {
+      recording = false;
+      stopVad();
+      if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+    } catch {
+      // ignore
+    }
+  }
   stopAudio();
   showHeard(value);
   setOrb("thinking");
@@ -159,7 +392,8 @@ async function runVoiceCommand(text) {
     const result = await api("/api/command", {
       text: value,
       browserAudio: true,
-      speak: false
+      speak: false,
+      speakSystem: isElectronApp
     });
 
     if (result.ackAudioUrl) {
@@ -168,21 +402,30 @@ async function runVoiceCommand(text) {
     }
 
     setState(result.say || "Listo.");
-    if (result.audioUrl) {
-      await playAudioUrl(result.audioUrl);
-    } else if (result.say && window.speechSynthesis) {
-      // Fallback rápido si el TTS del server tarda
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(result.say);
-      u.lang = "es-MX";
-      window.speechSynthesis.speak(u);
+    // En Electron la voz sale por el sistema (se oye aunque estés en otra app)
+    if (!isElectronApp) {
+      if (result.audioUrl) {
+        await playAudioUrl(result.audioUrl);
+      } else if (result.say && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(result.say);
+        u.lang = "es-MX";
+        window.speechSynthesis.speak(u);
+      }
+    } else if (result.say) {
+      setState(result.say);
     }
   } catch {
     const msg = "Se me trabó, bro. Prueba otra vez.";
     setState(msg);
     try {
       const fallback = await api("/api/speak", { text: msg, browserAudio: true });
-      await playAudioUrl(fallback.audioUrl);
+      if (fallback.audioUrl) await playAudioUrl(fallback.audioUrl);
+      else if (window.speechSynthesis) {
+        const u = new SpeechSynthesisUtterance(msg);
+        u.lang = "es-MX";
+        window.speechSynthesis.speak(u);
+      }
     } catch {
       // ignore
     }
@@ -190,7 +433,7 @@ async function runVoiceCommand(text) {
     busy = false;
     if (wakeMode && !muted) {
       setOrb("listening");
-      setState("Escuchando · di Hey Jarvis");
+      setState(useWhisperMic ? "Mic ON · habla tu orden" : "Escuchando · di Hey Jarvis");
       resumeMicSoon(500);
     } else {
       setOrb(muted ? "paused" : "idle");
@@ -212,21 +455,35 @@ function stopListening() {
   muted = true;
   armedUntil = 0;
   pauseMic();
+  recording = false;
+  stopVad();
+  try {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+  } catch {
+    // ignore
+  }
   setOrb("paused");
   setState("En pausa. Toca el orbe para escuchar otra vez.");
 }
 
 function startListening() {
-  if (!SpeechRecognition) {
-    setState("Usa Chrome o Edge para voz continua.");
-    setOrb("paused");
-    return;
-  }
-
   muted = false;
   wakeMode = true;
   networkFailCount = 0;
   setOrb("listening");
+
+  if (useWhisperMic) {
+    setState("Mic ON · habla y pausa al terminar");
+    startWhisperTake();
+    return;
+  }
+
+  if (!SpeechRecognition) {
+    setState("Mic no disponible. Usa la app desktop o Chrome.");
+    setOrb("paused");
+    return;
+  }
+
   setState("Escuchando · di Hey Jarvis");
 
   if (!wakeRecognition) {
@@ -267,21 +524,29 @@ function startListening() {
     wakeRecognition.onerror = (event) => {
       const err = event.error || "";
       if (err === "not-allowed") {
-        setState("Permiso de micrófono denegado. Actívalo en Chrome y recarga.");
+        setState("Permiso de micrófono denegado.");
         stopListening();
         return;
       }
-      if (err === "network") {
+      if (err === "network" || err === "service-not-allowed" || err === "audio-capture") {
         networkFailCount += 1;
-        if (networkFailCount >= 10) {
-          setState("Mic online inestable. Toca el orbe para reintentar.");
-          stopListening();
+        if (networkFailCount >= 2) {
+          setState("Pasando a mic local (Whisper)...");
+          window.__jarvisForceWhisper = true;
+          useWhisperMic = true;
+          try {
+            wakeRecognition?.stop();
+          } catch {
+            // ignore
+          }
+          startWhisperTake();
         }
       }
     };
 
     wakeRecognition.onend = () => {
       if (!wakeMode || muted || busy) return;
+      if (window.__jarvisForceWhisper || useWhisperMic) return;
       const wait = networkFailCount > 2 ? 900 : 280;
       setTimeout(() => {
         if (!wakeMode || muted || busy) return;
@@ -384,20 +649,30 @@ async function boot() {
     return;
   }
 
-  if (window.jarvisDesktop?.isElectron) {
+  if (isElectronApp) {
+    useWhisperMic = true;
     const badge = document.getElementById("appBadge");
     if (badge) badge.hidden = false;
-    window.jarvisDesktop.onToggleListen(() => {
+    const hint = document.querySelector(".hint");
+    if (hint) {
+      hint.innerHTML =
+        "Habla tu orden y <strong>pausa ~1s</strong> · orbe pausa · <strong>Ctrl+Shift+J</strong>";
+    }
+    window.jarvisDesktop?.onToggleListen?.(() => {
       if (wakeMode && !muted) stopListening();
       else startListening();
     });
   }
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((t) => t.stop());
-  } catch {
-    setState("Activa el micrófono para Jarvis.");
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+  } catch (err) {
+    console.warn(err);
+    setState("Windows bloqueó el mic. Privacidad → Micrófono → permitir apps de escritorio.");
+    setOrb("paused");
+    return;
   }
 
   connectEvents();
@@ -409,11 +684,14 @@ async function boot() {
   try {
     const greet = await api("/api/greeting");
     setState(greet.text);
-    if (greet.audioUrl) await playAudioUrl(greet.audioUrl);
-    else if (greet.text && window.speechSynthesis) {
-      const u = new SpeechSynthesisUtterance(greet.text);
-      u.lang = "es-MX";
-      window.speechSynthesis.speak(u);
+    // En Electron el saludo ya suena por el servidor
+    if (!isElectronApp) {
+      if (greet.audioUrl) await playAudioUrl(greet.audioUrl);
+      else if (greet.text && window.speechSynthesis) {
+        const u = new SpeechSynthesisUtterance(greet.text);
+        u.lang = "es-MX";
+        window.speechSynthesis.speak(u);
+      }
     }
   } catch {
     // continue

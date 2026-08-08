@@ -29,7 +29,26 @@ async function launchAny(name) {
     return openUrl(n);
   }
 
-  // 1) Start-Process directo
+  // Apps conocidas → openApp (no búsqueda de .exe)
+  try {
+    const { openApp, normalizeAppKey, APP_MAP } = require("./system");
+    const key = normalizeAppKey(n);
+    if (APP_MAP[key] || ["whatsapp", "vscode", "cursor", "terminal"].includes(key)) {
+      return openApp(key);
+    }
+  } catch {
+    // continue
+  }
+
+  // 1) Menú Inicio por nombre (cmd start)
+  try {
+    await runShell(`cmd /c start "" ${psQuote(n)}`);
+    return { ok: true, message: `Abrí ${n}.` };
+  } catch {
+    // continue
+  }
+
+  // 2) Start-Process directo
   try {
     await runShell(`Start-Process ${psQuote(n)}`);
     return { ok: true, message: `Abrí ${n}.` };
@@ -37,43 +56,25 @@ async function launchAny(name) {
     // continue
   }
 
-  // 2) cmd start (abre apps del menú Inicio por nombre)
-  try {
-    await runShell(`cmd /c start "" ${psQuote(n)}`);
-    return { ok: true, message: `Lancé ${n}.` };
-  } catch {
-    // continue
-  }
-
-  // 3) Buscar .exe en Program Files / LocalAppData
+  // 3) Buscar App en shell:AppsFolder por nombre
   try {
     const script = `
 $ErrorActionPreference='SilentlyContinue'
 $q = ${psQuote(n)}
-$roots = @(
-  "$env:LOCALAPPDATA\\Programs",
-  "$env:LOCALAPPDATA",
-  "$env:ProgramFiles",
-  ${psQuote(process.env["ProgramFiles(x86)"] || "")},
-  "$env:APPDATA"
-) | Where-Object { $_ -and (Test-Path $_) }
-foreach ($r in $roots) {
-  $hit = Get-ChildItem -Path $r -Recurse -Filter ($q + '*.exe') -Depth 3 | Select-Object -First 1
-  if ($hit) { $hit.FullName; break }
-  $hit2 = Get-ChildItem -Path $r -Recurse -Filter '*.exe' -Depth 3 | Where-Object { $_.BaseName -like ('*'+$q+'*') } | Select-Object -First 1
-  if ($hit2) { $hit2.FullName; break }
-}
+$shell = New-Object -ComObject Shell.Application
+$hit = $shell.NameSpace('shell:AppsFolder').Items() | Where-Object { $_.Name -like ('*'+$q+'*') } | Select-Object -First 1
+if ($hit) { $hit.Path }
 `;
-    const found = String(await runShell(script)).trim().split(/\r?\n/).filter(Boolean)[0];
-    if (found && fs.existsSync(found)) {
-      await openPath(found);
-      return { ok: true, message: `Abrí ${path.basename(found)}.` };
+    const appId = String(await runShell(script)).trim();
+    if (appId) {
+      await runShell(`Start-Process ${psQuote(`shell:AppsFolder\\${appId}`)}`);
+      return { ok: true, message: `Abrí ${n}.` };
     }
   } catch {
     // continue
   }
 
-  return { ok: false, message: `No encontré cómo abrir "${n}".` };
+  return { ok: false, message: `No encontré la app "${n}". Di el nombre como en el menú Inicio.` };
 }
 
 async function hotkey(keys) {

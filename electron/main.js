@@ -1,8 +1,12 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, shell, ipcMain, session, systemPreferences } = require("electron");
 const path = require("node:path");
 const http = require("node:http");
 
 process.env.JARVIS_ELECTRON = "1";
+
+// Ayuda a capturar micrófono en Windows
+app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 let mainWindow = null;
 let tray = null;
@@ -10,6 +14,30 @@ let serverInfo = null;
 let quitting = false;
 
 const ROOT = path.join(__dirname, "..");
+
+function allowMediaPermissions() {
+  const sess = session.defaultSession;
+
+  sess.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    const ok = ["media", "microphone", "audioCapture", "mediaKeySystem", "notifications"].includes(permission);
+    console.log("[perm-request]", permission, details?.mediaTypes || "", "=>", ok);
+    callback(ok);
+  });
+
+  sess.setPermissionCheckHandler((_wc, permission) => {
+    return ["media", "microphone", "audioCapture", "notifications"].includes(permission);
+  });
+
+  // Windows: pedir permiso de mic a nivel OS si aplica
+  try {
+    if (process.platform === "win32" && systemPreferences.getMediaAccessStatus) {
+      const status = systemPreferences.getMediaAccessStatus("microphone");
+      console.log("[mic-os]", status);
+    }
+  } catch {
+    // ignore
+  }
+}
 
 function waitForHealth(url, tries = 40) {
   return new Promise((resolve, reject) => {
@@ -65,9 +93,20 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      spellcheck: false
+      spellcheck: false,
+      sandbox: false
     }
   });
+
+  // Permisos también en la sesión de esta ventana (mic)
+  const sess = mainWindow.webContents.session;
+  sess.setPermissionRequestHandler((_wc, permission, callback) => {
+    const ok = ["media", "microphone", "audioCapture", "notifications"].includes(permission);
+    callback(ok);
+  });
+  sess.setPermissionCheckHandler((_wc, permission) =>
+    ["media", "microphone", "audioCapture", "notifications"].includes(permission)
+  );
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
@@ -174,10 +213,15 @@ function registerShortcuts() {
 
 app.whenReady().then(async () => {
   try {
+    allowMediaPermissions();
     await ensureServer();
     createWindow();
     createTray();
     registerShortcuts();
+    // Mic sigue vivo aunque la ventana esté oculta / otra app al frente
+    if (mainWindow) {
+      mainWindow.webContents.setBackgroundThrottling(false);
+    }
   } catch (error) {
     console.error("[electron]", error);
     app.quit();

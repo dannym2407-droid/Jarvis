@@ -30,6 +30,7 @@ const APP_MAP = {
   calculator: ["calc.exe"],
   cmd: ["cmd.exe"],
   powershell: ["powershell.exe"],
+  terminal: ["wt.exe", "powershell.exe"],
   settings: ["ms-settings:"],
   whatsapp: [
     path.join(os.homedir(), "AppData\\Local\\WhatsApp\\WhatsApp.exe"),
@@ -67,8 +68,131 @@ const APP_MAP = {
   ]
 };
 
-const WHATSAPP_STORE_APP =
-  "shell:AppsFolder\\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App";
+/** Alias crudos / errores de mic → clave APP_MAP */
+const APP_KEY_ALIASES = {
+  visual: "vscode",
+  "visual studio": "vscode",
+  "visual studio code": "vscode",
+  "vs code": "vscode",
+  vscode: "vscode",
+  code: "vscode",
+  codigo: "vscode",
+  código: "vscode",
+  bisual: "vscode",
+  "vs coud": "vscode",
+  "visual code": "vscode",
+  visualstudio: "visualstudio",
+  "visual estudio": "visualstudio",
+  devenv: "visualstudio",
+  whatsapp: "whatsapp",
+  wasap: "whatsapp",
+  watsap: "whatsapp",
+  guasap: "whatsapp",
+  wassap: "whatsapp",
+  "whats app": "whatsapp",
+  "what sap": "whatsapp",
+  cursor: "cursor",
+  chrome: "chrome",
+  navegador: "chrome",
+  edge: "edge",
+  opera: "opera",
+  spotify: "spotify",
+  discord: "discord",
+  terminal: "terminal",
+  powershell: "powershell",
+  cmd: "cmd",
+  notepad: "notepad",
+  bloc: "notepad",
+  calculadora: "calculator",
+  calc: "calculator",
+  explorador: "explorer",
+  archivos: "explorer",
+  configuracion: "settings",
+  configuración: "settings",
+  chatgpt: "chatgpt",
+  "chat gpt": "chatgpt",
+  gpt: "chatgpt",
+  youtube: "youtube",
+  github: "github",
+  notion: "notion",
+  slack: "slack",
+  figma: "figma",
+  word: "word",
+  excel: "excel",
+  powerpoint: "powerpoint",
+  teams: "teams"
+};
+
+const STORE_APPS = {
+  whatsapp: "shell:AppsFolder\\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App",
+  vscode: "shell:AppsFolder\\Microsoft.VisualStudioCode",
+  cursor: "shell:AppsFolder\\Anysphere.Cursor",
+  terminal: "shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"
+};
+
+const APP_PROTOCOLS = {
+  whatsapp: "whatsapp:",
+  teams: "ms-teams:",
+  settings: "ms-settings:"
+};
+
+function normalizeAppKey(name) {
+  const raw = String(name || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[¿?¡!.,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!raw) return "";
+  if (APP_MAP[raw]) return raw;
+  if (APP_KEY_ALIASES[raw]) return APP_KEY_ALIASES[raw];
+  // match por includes, aliases largos primero
+  const aliases = Object.keys(APP_KEY_ALIASES).sort((a, b) => b.length - a.length);
+  for (const alias of aliases) {
+    if (raw === alias || raw.includes(alias)) return APP_KEY_ALIASES[alias];
+  }
+  return raw;
+}
+
+async function launchStoreOrShell(appKey, displayName) {
+  if (APP_PROTOCOLS[appKey]) {
+    try {
+      await runShell(`Start-Process ${psQuote(APP_PROTOCOLS[appKey])}`);
+      return { ok: true, message: `Abrí ${displayName}.` };
+    } catch {
+      // continue
+    }
+  }
+  if (STORE_APPS[appKey]) {
+    try {
+      await runShell(`Start-Process ${psQuote(STORE_APPS[appKey])}`);
+      return { ok: true, message: `Abrí ${displayName}.` };
+    } catch {
+      // continue
+    }
+  }
+  // Menú Inicio por nombre amigable (no busca archivos)
+  const startNames = {
+    vscode: "Visual Studio Code",
+    whatsapp: "WhatsApp",
+    cursor: "Cursor",
+    terminal: "Terminal",
+    chrome: "Google Chrome",
+    spotify: "Spotify",
+    discord: "Discord"
+  };
+  const label = startNames[appKey];
+  if (label) {
+    try {
+      await runShell(`cmd /c start "" ${psQuote(label)}`);
+      return { ok: true, message: `Abrí ${displayName}.` };
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -162,25 +286,57 @@ if (-not $p) { exit 0 }
 }
 
 async function openApp(name) {
-  const key = String(name || "").toLowerCase().trim();
+  const key = normalizeAppKey(name);
+  const display = key || String(name || "").trim() || "la app";
 
-  if (key === "youtube" || key === "github") {
-    return openUrl(APP_MAP[key][0]);
+  if (key === "youtube" || key === "github" || key === "chatgpt" || key === "notion" || key === "figma") {
+    const url = APP_MAP[key]?.[0] || `https://${key}.com`;
+    if (/^https?:\/\//i.test(url)) return openUrl(url);
   }
 
   const candidates = APP_MAP[key];
-  if (!candidates) {
-    // Intenta lanzar cualquier cosa por nombre
-    try {
-      await runShell(`Start-Process ${psQuote(name)}`);
-      return { ok: true, message: `Abrí ${name}.` };
-    } catch {
+
+  // WhatsApp: protocolo / Store primero (casi siempre es app de Microsoft Store)
+  if (key === "whatsapp") {
+    const exe = firstExisting(candidates || []);
+    if (exe) {
+      await runDetached(exe, []);
+      return { ok: true, message: "Abrí WhatsApp." };
+    }
+    const launched = await launchStoreOrShell("whatsapp", "WhatsApp");
+    if (launched) return launched;
+    await openUrl("https://web.whatsapp.com");
+    return { ok: true, message: "Abrí WhatsApp Web." };
+  }
+
+  // VS Code / Cursor: exe real, luego Store/shell, nunca búsqueda de archivos
+  if (key === "vscode" || key === "cursor" || key === "visualstudio") {
+    const exe = firstExisting(candidates || []);
+    if (exe) {
+      await runDetached(exe, []);
+      return { ok: true, message: `Abrí ${key === "vscode" ? "VS Code" : key}.` };
+    }
+    if (key === "vscode") {
       try {
-        await runShell(`cmd /c start "" ${psQuote(name)}`);
-        return { ok: true, message: `Lancé ${name}.` };
+        await runShell("code");
+        return { ok: true, message: "Abrí VS Code." };
       } catch {
-        return { ok: false, message: `No conozco la app "${name}". Prueba: "abre ${name}" otra vez o di el .exe.` };
+        // continue
       }
+    }
+    const launched = await launchStoreOrShell(key === "visualstudio" ? "vscode" : key, display);
+    if (launched) return launched;
+    return { ok: false, message: `No pude abrir ${display}. ¿Está instalado?` };
+  }
+
+  if (!candidates) {
+    const launched = await launchStoreOrShell(key, display);
+    if (launched) return launched;
+    try {
+      await runShell(`cmd /c start "" ${psQuote(String(name || key).trim())}`);
+      return { ok: true, message: `Abrí ${display}.` };
+    } catch {
+      return { ok: false, message: `No conozco la app "${display}". Di el nombre completo.` };
     }
   }
 
@@ -197,55 +353,49 @@ async function openApp(name) {
     }
   }
 
-  if (key === "whatsapp") {
-    const exe = firstExisting(candidates);
-    if (exe) {
-      await runDetached(exe, []);
-      return { ok: true, message: "Abrí WhatsApp." };
-    }
-    try {
-      await runShell(`Start-Process "${WHATSAPP_STORE_APP}"`);
-      return { ok: true, message: "Abrí WhatsApp." };
-    } catch {
-      await openUrl("https://web.whatsapp.com");
-      return { ok: true, message: "Abrí WhatsApp Web." };
-    }
-  }
-
   if (key === "opera") {
     try {
       await runShell('Start-Process "opera"');
       return { ok: true, message: "Abrí Opera." };
     } catch {
-      const exe = firstExisting(candidates);
-      if (exe) {
-        await runDetached(exe, []);
-        return { ok: true, message: "Abrí Opera." };
-      }
+      // fallthrough
+    }
+  }
+
+  if (key === "terminal") {
+    try {
+      await runShell('Start-Process "wt.exe"');
+      return { ok: true, message: "Abrí Terminal." };
+    } catch {
+      // fallthrough
     }
   }
 
   const exe = firstExisting(candidates);
   if (exe) {
+    if (/^https?:\/\//i.test(exe)) return openUrl(exe);
     await runDetached(exe, []);
-    return { ok: true, message: `Abrí ${key}.` };
+    return { ok: true, message: `Abrí ${display}.` };
   }
 
-  // Apps del sistema en PATH (calc, notepad, etc.)
+  const launched = await launchStoreOrShell(key, display);
+  if (launched) return launched;
+
   const pathLaunch = {
     calculator: "calc.exe",
     notepad: "notepad.exe",
     explorer: "explorer.exe",
     cmd: "cmd.exe",
-    powershell: "powershell.exe"
+    powershell: "powershell.exe",
+    terminal: "wt.exe"
   };
 
   try {
-    const launchName = pathLaunch[key] || candidates[0] || key;
+    const launchName = pathLaunch[key] || key;
     await runShell(`Start-Process ${psQuote(launchName)}`);
-    return { ok: true, message: `Abrí ${key}.` };
+    return { ok: true, message: `Abrí ${display}.` };
   } catch {
-    return { ok: false, message: `No pude abrir ${key}.` };
+    return { ok: false, message: `No pude abrir ${display}.` };
   }
 }
 
@@ -522,5 +672,6 @@ module.exports = {
   runShell,
   pasteText,
   sleep,
+  normalizeAppKey,
   APP_MAP
 };
